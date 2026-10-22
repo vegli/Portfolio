@@ -1,8 +1,8 @@
 # Developer Portfolio & Playground
 
-Veljko Gligorijević's developer portfolio, presenting professional experience, skills and products contributed to at Yettel.
+A portfolio website with professional experience, skills and projects, alongside a Playground for a card-based technical interview game.
 
-## Status
+## Stack and implementation status
 
 - **Implemented:** responsive portfolio built with Vue 3, TypeScript and Vite, including product cards, contact details and a PDF CV viewer.
 - **Planned:** a card-based technical interview game in the Playground. The current Playground page is a placeholder; gameplay and backend services are not implemented.
