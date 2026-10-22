@@ -4,7 +4,7 @@
 **Scope:** Anonymous, time-limited, card-based technical interview game  
 **Companion:** [`DOMAIN.md`](DOMAIN.md) is the source of truth for entities, invariants, and scoring concepts.
 
-This document describes **how a game plays and how its use cases behave**. It intentionally does not specify final HTTP payloads, PostgreSQL schema, or Redis serialization; those belong in a future `ARCHITECTURE.md`.
+This document describes **how a game plays and how its use cases behave**. It intentionally does not specify final HTTP payloads, PostgreSQL schema, or Redis serialization; those belong in [`ARCH.md`](ARCH.md).
 
 ## 1. Game at a glance
 
@@ -111,7 +111,7 @@ The diagram's `ACTIVE_ANSWER` / `ACTIVE_NEXT` names are shorthand for `ACTIVE` p
 
 **Invalid submissions:** Reject answers for an absent/finished session, the wrong phase, nonexistent option, or an already-answered card; never grant rewards twice.
 
-**Unresolved:** Exact error codes, race/idempotency mechanism, timestamp ordering and boundary behavior when timeout and a TIME bonus happen nearly simultaneously.
+**Implementation details still open:** Exact error codes, retry/idempotency policy and clock handling. The agreed processing order below checks expiry before evaluation, so an already-expired answer cannot receive a TIME bonus. `ARCH.md` specifies Redis optimistic concurrency.
 
 ### UC-03 — NextCard
 
@@ -159,7 +159,7 @@ The diagram's `ACTIVE_ANSWER` / `ACTIVE_NEXT` names are shorthand for `ACTIVE` p
 
 **Purpose:** Allow the frontend to reconcile display with the backend (for example after a refresh) while Redis still contains the session.
 
-**Behavior:** Return safe, phase-appropriate state; never reveal the answer to an unanswered card. Recompute/check time on read so a client cannot revive an expired game. Exact resumption/refresh behavior and API route are **not yet agreed**.
+**Behavior:** Return safe, phase-appropriate state; never reveal the answer to an unanswered card. Recompute/check time on read so a client cannot revive an expired game. The agreed route is `GET /api/v1/games/{id}`; transport details are in `ARCH.md`. During `AWAITING_NEXT_CARD`, state refresh must support retrieving the last accepted answer result. Its domain representation is deferred beyond Phase 2.1.
 
 ## 5. Card generation and balancing
 
@@ -233,7 +233,7 @@ Treat client-submitted HP, time, score, streak, effects, difficulty or success f
 | Finished session and outcome | Only temporarily for result display; expires from Redis |
 | Accounts, leaderboard, historical analytics | **Not stored in MVP** |
 
-**Agreed:** Redis key `game:session:{uuid}` contains one JSON snapshot with dynamic state and IDs referencing PostgreSQL content; rolled effects are persisted in the snapshot. TTL is 15 minutes of accepted state-changing activity, not game duration, and reads do not refresh it. Use optimistic concurrency with Redis `WATCH/MULTI/EXEC`; exact retry behavior remains to be detailed in `ARCHITECTURE.md`.
+**Agreed:** Redis key `game:session:{uuid}` contains one JSON snapshot with dynamic state and IDs referencing PostgreSQL content; rolled effects are persisted in the snapshot. TTL is 15 minutes of accepted state-changing activity, not game duration, and reads do not refresh it. Use optimistic concurrency with Redis `WATCH/MULTI/EXEC`; exact retry behavior remains to be detailed in `ARCH.md`.
 
 ## 10. Example acceptance scenarios
 
@@ -270,4 +270,4 @@ Treat client-submitted HP, time, score, streak, effects, difficulty or success f
 - API payloads/status codes and Redis conflict retry details.
 - Final result statistics and resume-after-refresh UX.
 
-**Next:** consult [`ARCHITECTURE.md`](ARCHITECTURE.md) for persistence decisions, then define REST contracts and PostgreSQL schema.
+**Next:** implement and unit-test pure Python game rules after the foundational domain entities. Resolve relevant open scoring decisions before implementing them; persistence follows domain work.

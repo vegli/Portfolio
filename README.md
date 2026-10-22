@@ -7,7 +7,8 @@ A portfolio website with professional experience, skills and projects, alongside
 - **Implemented:** responsive portfolio built with Vue 3, TypeScript and Vite, including product cards, contact details and a PDF CV viewer.
 - **Planned:** a card-based technical interview game in the Playground. The current Playground page is a placeholder; gameplay and backend services are not implemented.
 - **Backend foundation:** FastAPI application with environment settings and a tested health endpoint, managed with uv and Python 3.14.
-- **Planned:** pure Python domain model and game-rule tests, followed by PostgreSQL for game definitions, Redis for temporary game-session state and Docker Compose.
+- **Domain foundation:** immutable Python domain entities with focused invariant tests.
+- **Planned:** pure Python game rules and tests, followed by PostgreSQL for game definitions, Redis for temporary game-session state and Docker Compose.
 
 ## Run locally
 

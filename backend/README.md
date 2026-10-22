@@ -1,6 +1,6 @@
 # Backend
 
-Minimal FastAPI foundation. Requires Python **3.14** and [uv](https://docs.astral.sh/uv/).
+FastAPI foundation and framework-independent domain entities. Requires Python **3.14** and [uv](https://docs.astral.sh/uv/).
 
 Run commands from `backend/`:
 
@@ -46,6 +46,10 @@ No static type checker is configured in this phase.
 - `app/__init__.py` marks the application package.
 - `tests/test_health.py` checks the health response.
 
-Next: implement and unit-test the pure Python domain model and game rules,
+The `app/domain/` package contains immutable questions, player state, effects, cards
+and session snapshots. Focused invariant tests live in `tests/domain/`.
+Run them separately with `uv run pytest tests/domain`.
+
+Next: implement and unit-test pure Python game rules,
 resolving the relevant open decisions in the design documents first.
 PostgreSQL and Redis integration follow that work.

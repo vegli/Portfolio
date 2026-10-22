@@ -181,7 +181,7 @@ class AnswerOption:
 class Question:
     id: UUID
     text: str
-    category: QuestionCategory  # Networking, Databases, System Design, Security, DDD, Performance
+    category: QuestionCategory  # Backend Engineering, Databases, Networking, System Design, Security, DDD, Performance
     difficulty: int             # 1..5
     options: tuple[AnswerOption, ...]
     correct_answer_id: UUID
@@ -246,12 +246,12 @@ class DrawnCard:
     effects: tuple[Effect, ...]
 ```
 
-`Effect` is an outcome-dependent delta, not a streak bonus. A correct-answer effect should be beneficial, and an incorrect-answer effect detrimental; the exact sign/value validation will be implemented when we finalize effect policy.
+`Effect` is an outcome-dependent delta, not a streak bonus. Correct-answer effects must have positive integer values; incorrect-answer effects must have negative integer values. Zero-valued effects are rejected. These sign constraints are enforced in Phase 2.1 without fixing provisional catalog magnitudes.
 
 ### PlayerState
 
 ```python
-@dataclass
+@dataclass(frozen=True)
 class PlayerState:
     hp: int = 100
     score: int = 0
@@ -273,27 +273,27 @@ class GameOverReason(str, Enum):
     HP_DEPLETED = "hp_depleted"
     TIME_EXPIRED = "time_expired"
     NO_QUESTIONS_AVAILABLE = "no_questions_available"
-@dataclass
+@dataclass(frozen=True)
 class GameSession:
     id: UUID
     status: GameStatus
-    phase: GamePhase
+    phase: GamePhase | None
     player: PlayerState
-    remaining_time: float
+    remaining_time_ms: int
     last_updated_at: datetime
     current_card: DrawnCard | None
-    used_question_ids: set[UUID]
+    used_question_ids: frozenset[UUID]
     game_over_reason: GameOverReason | None
 ```
 
-`GameSession` is the **aggregate root**. Game state must be changed through domain operations rather than unrestricted external mutation.
+`GameSession` is the **aggregate root**. Game state must be changed through domain operations that return validated replacement sessions rather than unrestricted external mutation. Lifecycle operations are not implemented in Phase 2.1.
 
 ## 4. Game lifecycle and transitions
 
 ```mermaid
 flowchart TD
-    A[CREATED] -->|start| B[ACTIVE / AWAITING_CARD]
-    B -->|draw card| C[ACTIVE / AWAITING_ANSWER]
+    A[CREATED / AWAITING_CARD] -->|prepare first card| B[Card assignment operation]
+    B -->|draw card and activate| C[ACTIVE / AWAITING_ANSWER]
     C -->|submit answer| D[ACTIVE / AWAITING_NEXT_CARD]
     D -->|player clicks Next Card| B
     B -->|no compatible unused questions| E[FINISHED]
@@ -305,11 +305,11 @@ flowchart TD
 Conceptual aggregate operations:
 
 ```python
-session.start()
-session.assign_card(card)
-session.submit_answer(answer_id)
-session.apply_effect(effect)
-session.finish(reason)
+session = session.start()
+session = session.assign_card(card)
+session = session.submit_answer(answer_id)
+session = session.apply_effect(effect)
+session = session.finish(reason)
 ```
 
 `CardFactory` handles selection/generation, while `ScoreCalculator` and `StreakPolicy` handle their respective calculations. The exact method signatures and orchestration boundaries remain to be worked out.
@@ -399,29 +399,53 @@ session.finish(reason)
 
 11. Streak multipliers apply only to base score for correct answers.
 
-## 7. Suggested code organization (not final)
+## 7. Domain implementation — Phase 2.1
 
 ```text
-backend/
-└── app/
-    ├── domain/
-    │   ├── models/
-    │   │   ├── question.py
-    │   │   ├── card.py
-    │   │   ├── effect.py
-    │   │   ├── player.py
-    │   │   └── game_session.py
-    │   ├── services/
-    │   │   ├── card_factory.py
-    │   │   └── score_calculator.py
-    │   └── policies/
-    │       └── streak_policy.py
-    ├── application/
-    ├── infrastructure/
-    └── api/
+backend/app/domain/
+├── __init__.py
+├── question.py       # Question, AnswerOption, QuestionCategory
+├── player.py         # PlayerState
+├── effect.py         # Effect, EffectDefinition and effect enums
+├── card.py           # CardTemplate, DrawnCard, CardRarity
+└── game_session.py   # GameSession and session enums
 ```
 
-This is a modular monolith, not a microservice design. Domain classes should be independent of FastAPI, database ORM, and transport DTOs.
+The domain uses only Python's standard library. All dataclasses are frozen;
+options and effects are tuples, and used question IDs are a frozenset. Collection
+inputs are copied into these immutable containers. Future domain operations return
+validated replacement sessions, including replacement PlayerState values.
+
+Construction enforces question option membership/uniqueness, difficulty bounds,
+nonnegative budgets and streaks, signed nonzero effects, positive integer definition
+costs/weights, and question/template difficulty compatibility. Each outcome permits
+at most one effect per type, with effects present exactly when its budget is positive.
+Effect TIME values remain integer seconds as in the catalog; session time is integer
+milliseconds. A future effect-application operation must convert seconds to milliseconds.
+No provisional balancing magnitudes or rarity budget caps are enforced.
+
+Effect snapshots intentionally contain no cost or rarity. The future CardFactory
+must enforce total cost and rarity compatibility using EffectDefinition entries.
+It must also perform random selection; these behaviors are not implemented yet.
+
+PlayerState permits negative HP and score, without arbitrary caps. The score floor
+remains undecided; representing a negative score does not decide the eventual scoring policy.
+QuestionCategory includes all seven documented topics, including Backend Engineering.
+
+GameSession starts with CREATED / AWAITING_CARD, a fresh 100/0/0 player and
+60,000 milliseconds. Its timestamp is supplied explicitly and must be timezone-aware.
+There are no clock reads or timer updates during construction. Remaining time cannot
+be negative and has no upper cap. ACTIVE snapshots require a current card and either
+AWAITING_ANSWER or AWAITING_NEXT_CARD. FINISHED snapshots have no phase and require
+a reason; unfinished snapshots cannot have a reason. Any current question must be
+recorded in the used-question set. Card assignment is a future operation, not a stable
+ACTIVE / AWAITING_CARD snapshot.
+
+These checks validate snapshot structure, not transition history. Answer evaluation,
+repeat-draw prevention across transitions, effect application, timer advancement and
+game-over priority will be implemented and tested with the corresponding operations.
+AWAITING_NEXT_CARD will eventually retain the last accepted answer result for refresh;
+no result representation or extra statistics are introduced in Phase 2.1.
 
 ## 8. Recently finalized backend rules
 
@@ -444,4 +468,4 @@ This is a modular monolith, not a microservice design. Domain classes should be 
 
 ## 10. Next step
 
-Consult [`GAME_DESIGN.md`](GAME_DESIGN.md) for use cases and [`ARCHITECTURE.md`](ARCHITECTURE.md) for agreed storage choices. Next: complete REST API contracts, persistence schema and error handling before the first vertical slice.
+Consult [`GAME_DESIGN.md`](GAME_DESIGN.md) for use cases and [`ARCH.md`](ARCH.md) for agreed storage choices. Next: implement and unit-test pure Python game rules, resolving scoring decisions first. PostgreSQL and Redis integration follow domain work.

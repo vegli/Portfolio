@@ -20,6 +20,8 @@ flowchart TD
 
 Architecture is a **modular monolith**, not microservices. Domain objects and policies should remain independent of FastAPI, Redis and database ORM where practical.
 
+Phase 2.1 implements a flat `app/domain/` package of frozen standard-library dataclasses and enums. Player state and session snapshots are immutable; future operations return validated replacements. Session time uses integer milliseconds and explicitly supplied timezone-aware timestamps. No persistence adapters or lifecycle operations are implemented in this phase. Pure Python game-rule implementation and unit tests precede PostgreSQL and Redis integration.
+
 ## 2. Responsibility boundaries
 
 | Component | Owns |
