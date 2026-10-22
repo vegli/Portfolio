@@ -6,7 +6,8 @@ A portfolio website with professional experience, skills and projects, alongside
 
 - **Implemented:** responsive portfolio built with Vue 3, TypeScript and Vite, including product cards, contact details and a PDF CV viewer.
 - **Planned:** a card-based technical interview game in the Playground. The current Playground page is a placeholder; gameplay and backend services are not implemented.
-- **Planned backend:** FastAPI, PostgreSQL for game definitions and Redis for temporary game-session state, with uv and Docker Compose.
+- **Backend foundation:** FastAPI application with environment settings and a tested health endpoint, managed with uv and Python 3.14.
+- **Planned:** pure Python domain model and game-rule tests, followed by PostgreSQL for game definitions, Redis for temporary game-session state and Docker Compose.
 
 ## Run locally
 
@@ -19,6 +20,24 @@ npm run dev
 ```
 
 Open the local URL printed by Vite.
+
+## Run the backend
+
+Requires Python **3.14** and [uv](https://docs.astral.sh/uv/).
+
+```sh
+cd backend
+uv sync --locked
+cp .env.example .env
+uv run uvicorn app.main:app --reload
+```
+
+Copying `.env.example` is optional; defaults work without it. Environment variables
+override `.env` values. Open <http://127.0.0.1:8000/health> for the health status
+and <http://127.0.0.1:8000/docs> for API documentation.
+
+Run tests from `backend/` with `uv run pytest`.
+See [backend instructions](backend/README.md) for settings and import checks.
 
 ## Validate and build
 
@@ -37,6 +56,7 @@ For deployment, serve `frontend/dist/` with an SPA fallback to `index.html` for 
 ## Project layout
 
 - `frontend/` — portfolio interface, routing and public assets.
+- `backend/` — FastAPI foundation, environment settings and endpoint tests.
 - [Domain](docs/DOMAIN.md) — entities and invariants.
 - [Game design](docs/GAME_DESIGN.md) — gameplay and balancing rules.
 - [Architecture](docs/ARCH.md) — persistence, API and security decisions.
