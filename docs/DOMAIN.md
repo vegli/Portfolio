@@ -139,11 +139,21 @@ Each signed variant is a separate definition with `CORRECT` for positive and `IN
 
 - Incorrect answer: reset `correct_streak` to 0.
 
+- Total score may be negative; there is **no lower bound** and no clamping to zero.
+
+- Increment the correct streak **before** calculating the multiplier:
+
+| Correct streak after increment | Base-point multiplier |
+| --- | ---: |
+| 1–2 | 1× |
+| 3–4 | 1.5× |
+| 5+ | 2× (maximum) |
+
 - The streak influences **only the multiplier of base points for a correct answer**; it does **not** multiply Card Effect bonus points or influence HP/time.
 
-- Base points depend on question difficulty. The current **proposed starting values** are:
+- Base points depend on question difficulty. The agreed **initial balancing values** are:
 
-| Difficulty | Base points (provisional) |
+| Difficulty | Base points (initial balancing) |
 
 | --- | ---: |
 
@@ -160,11 +170,13 @@ Each signed variant is a separate definition with `CORRECT` for positive and `IN
 For a correct answer:
 
 ```text
-score_gain = base_points(question.difficulty) * streak_multiplier(correct_streak)
+score_gain = round_half_up(base_points(question.difficulty) * streak_multiplier(correct_streak))
              + sum(score effects triggered by CORRECT)
 ```
 
-The streak is incremented **before** calculating the multiplier (as in our previous example). Incorrect answers receive no base points; relevant negative card effects still apply.
+Incorrect answers receive no base points; relevant negative card effects still apply. The multiplier is capped at 2×, but the correct streak itself is not capped.
+
+Round the multiplied base award **half-up to the nearest integer**, before adding SCORE effects: 15 × 1.5 = 22.5 → 23 and 25 × 1.5 = 37.5 → 38. Use exact arithmetic rather than Python's built-in `round()`. Scores remain integers.
 
 ## 3. Conceptual Python domain model
 
@@ -399,6 +411,8 @@ session = session.finish(reason)
 
 11. Streak multipliers apply only to base score for correct answers.
 
+12. Total score has no lower bound; negative totals must not be clamped to zero.
+
 ## 7. Domain implementation — Phase 2.1
 
 ```text
@@ -428,8 +442,8 @@ Effect snapshots intentionally contain no cost or rarity. The future CardFactory
 must enforce total cost and rarity compatibility using EffectDefinition entries.
 It must also perform random selection; these behaviors are not implemented yet.
 
-PlayerState permits negative HP and score, without arbitrary caps. The score floor
-remains undecided; representing a negative score does not decide the eventual scoring policy.
+PlayerState permits negative HP and score, without arbitrary caps. Negative total
+scores are an agreed scoring rule; there is no lower score bound.
 QuestionCategory includes all seven documented topics, including Backend Engineering.
 
 GameSession starts with CREATED / AWAITING_CARD, a fresh 100/0/0 player and
@@ -447,6 +461,20 @@ game-over priority will be implemented and tested with the corresponding operati
 AWAITING_NEXT_CARD will eventually retain the last accepted answer result for refresh;
 no result representation or extra statistics are introduced in Phase 2.1.
 
+### Phase 2.2 scoring implementation
+
+`streak_policy.py` provides stateless `StreakPolicy.next_streak(current_streak,
+is_correct)` and `StreakPolicy.multiplier(correct_streak)`. Streak zero has a neutral
+1× multiplier; incorrect answers still earn no base points.
+
+`score_calculator.py` provides stateless `ScoreCalculator.calculate(difficulty,
+is_correct, correct_streak, effects=())`, returning an integer score delta. Its
+streak must already reflect the answer: positive for correct, zero for incorrect.
+It uses `Fraction` for exact multiplication and half-up rounding, then adds only
+outcome-matching SCORE effects. The initial base-point mapping lives in this
+calculator. Neither service mutates sessions or player state or depends on FastAPI
+or persistence. Answer orchestration remains future work.
+
 ## 8. Recently finalized backend rules
 
 - Anonymous sessions only; **no permanent results, accounts, history or leaderboard** in MVP. PostgreSQL stores seeded `questions`, exactly four `answer_options` per question, `card_templates`, and `effect_definitions`. Correct answer is identified by `questions.correct_answer_id`, which must belong to the same question; it is never sent in an unanswered-card API payload.
@@ -458,14 +486,10 @@ no result representation or extra statistics are introduced in Phase 2.1.
 
 ## 9. Open decisions / implementation details
 
-- **Streak multiplier thresholds and values** are not decided.
-- **Base point numbers** (10 / 15 / 20 / 25 / 30) remain provisional.
 - **Balancing catalog and budget ranges** above are provisional; validate with playtesting.
-- **Lower score bound** (can score become negative?) is not decided.
-- **Effect rounding and numeric types** for fractional multipliers remain open.
 - **Exact API request/response schemas, Redis retry policy, refresh UX and final result details** remain open.
 - **PostgreSQL constraints / migration approach** and final schema are still to be designed.
 
 ## 10. Next step
 
-Consult [`GAME_DESIGN.md`](GAME_DESIGN.md) for use cases and [`ARCH.md`](ARCH.md) for agreed storage choices. Next: implement and unit-test pure Python game rules, resolving scoring decisions first. PostgreSQL and Redis integration follow domain work.
+Consult [`GAME_DESIGN.md`](GAME_DESIGN.md) for use cases and [`ARCH.md`](ARCH.md) for agreed storage choices. Next: implement and unit-test remaining pure Python game rules and answer orchestration. PostgreSQL and Redis integration follow domain work.

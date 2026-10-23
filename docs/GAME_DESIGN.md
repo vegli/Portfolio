@@ -181,10 +181,22 @@ A drawn card is a `CardTemplate` + compatible `Question` + rolled `Effect` colle
 
 Only **correct answers** build a streak. An incorrect answer immediately resets it to zero; there is no incorrect-answer streak.
 
+Total score may be negative. There is **no lower bound**; never clamp the total to zero.
+
+Increment the correct streak **before** selecting the multiplier:
+
+| Correct streak after increment | Base-point multiplier |
+| --- | ---: |
+| 1–2 | 1× |
+| 3–4 | 1.5× |
+| 5+ | 2× (maximum) |
+
+The multiplier is capped at 2×; the correct streak itself is not capped.
+
 ```text
 correct answer:
   correct_streak += 1
-  base_award = base_points(question.difficulty) * streak_multiplier(correct_streak)
+  base_award = round_half_up(base_points(question.difficulty) * streak_multiplier(correct_streak))
   score_delta = base_award + CORRECT-triggered SCORE effects
 
 incorrect answer:
@@ -195,7 +207,7 @@ incorrect answer:
 
 **The streak multiplier applies only to the base award**, never to `SCORE` card effects. It does not modify HP or TIME.
 
-| Difficulty | Proposed base award (not final) |
+| Difficulty | Base points (initial balancing) |
 | --- | ---: |
 | 1 | 10 |
 | 2 | 15 |
@@ -203,7 +215,7 @@ incorrect answer:
 | 4 | 25 |
 | 5 | 30 |
 
-Streak thresholds/multipliers, rounding of fractional point results, and whether total score may fall below zero are **open decisions**.
+Round the multiplied base award **half-up to the nearest integer**, before adding SCORE effects: 15 × 1.5 = 22.5 → 23 and 25 × 1.5 = 37.5 → 38. Use exact arithmetic rather than Python's built-in `round()`. Scores remain integers.
 
 ## 7. Time and game over
 
@@ -258,16 +270,15 @@ Treat client-submitted HP, time, score, streak, effects, difficulty or success f
 2. If time is already exhausted, finish with `TIME_EXPIRED` without evaluating the answer or applying effects.
 3. Validate session status, phase, card and submitted option. Reject duplicates.
 4. Evaluate answer against server-side correct-answer ID.
-5. Update streak; award provisional difficulty-based base points times streak multiplier on correct answers only.
+5. Update streak; award difficulty-based base points times streak multiplier on correct answers only, rounded half-up to the nearest integer.
 6. Apply outcome-matching instant effects (`HP`, `SCORE`, `TIME`).
 7. Evaluate termination: `HP_DEPLETED` takes precedence over `TIME_EXPIRED` if both arise here.
 8. Otherwise move to `AWAITING_NEXT_CARD`; save state atomically in Redis.
 
 ## 12. Remaining decisions before implementation
 
-- Score multiplier thresholds, rounding, and lower score bound.
 - Final balance tuning (effect values, costs, weights and template budgets).
 - API payloads/status codes and Redis conflict retry details.
 - Final result statistics and resume-after-refresh UX.
 
-**Next:** implement and unit-test pure Python game rules after the foundational domain entities. Resolve relevant open scoring decisions before implementing them; persistence follows domain work.
+**Next:** implement and unit-test remaining pure Python game rules and answer orchestration using the Phase 2.2 scoring services; persistence follows domain work.

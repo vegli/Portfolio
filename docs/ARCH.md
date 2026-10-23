@@ -22,6 +22,13 @@ Architecture is a **modular monolith**, not microservices. Domain objects and po
 
 Phase 2.1 implements a flat `app/domain/` package of frozen standard-library dataclasses and enums. Player state and session snapshots are immutable; future operations return validated replacements. Session time uses integer milliseconds and explicitly supplied timezone-aware timestamps. No persistence adapters or lifecycle operations are implemented in this phase. Pure Python game-rule implementation and unit tests precede PostgreSQL and Redis integration.
 
+Phase 2.2 adds stateless `StreakPolicy` and `ScoreCalculator` in `app/domain/`.
+The policy updates streak values and supplies exact `Fraction` multipliers. The
+calculator accepts an already updated streak and returns an integer score delta,
+rounding only base awards and filtering effects by SCORE type and answer outcome.
+Neither service mutates snapshots or depends on FastAPI or persistence. Session
+answer orchestration remains to be implemented.
+
 ## 2. Responsibility boundaries
 
 | Component | Owns |
@@ -41,7 +48,10 @@ Phase 2.1 implements a flat `app/domain/` package of frozen standard-library dat
 - Every question has exactly four answer options and one correct answer; difficulty is 1–5.
 - A question cannot repeat within one GameSession but can reappear in later sessions.
 - Positive instant effects trigger on correct answers; negative instant effects on incorrect answers. Effect types: HP, SCORE, TIME.
-- Correct-answer streak affects **only base score**, not Card Effect points. Incorrect answers reset streak.
+- Initial base points for difficulty 1–5 are **10 / 15 / 20 / 25 / 30**.
+- Increment the correct streak before calculating the multiplier: **1–2 → 1×, 3–4 → 1.5×, 5+ → 2× maximum**. The streak itself is uncapped. Incorrect answers reset it to zero and earn no base points.
+- The multiplier applies **only to base points**, never SCORE effects. Round the multiplied base award **half-up to the nearest integer** before adding matching SCORE effects: 22.5 → 23, 37.5 → 38. Do not use Python's built-in `round()`.
+- Total score is an integer and may be negative, with **no lower bound** or clamping to zero.
 - Session ends if HP <= 0, time <= 0, or no compatible unused questions remain. When both HP and time reach zero due to the **same resolved answer**, use `HP_DEPLETED`; if time had already expired before answer acceptance, use `TIME_EXPIRED` without applying the answer or its effects.
 - **Play Again** starts a new independent session, without carrying over stats or used questions.
 - No accounts, leaderboard or permanent session/answer-history storage in MVP. Finished results are available only temporarily until Redis expiry.
@@ -266,7 +276,7 @@ Concurrency conflicts should not blindly retry writes: reload under `WATCH`, ree
 - Final Pydantic DTO field definitions, precise 401/403/404 behavior, abuse protection and request retry/idempotency strategy.
 - Concrete PostgreSQL DDL, composite correctness constraint, seed scripts and migrations.
 - Redis serializer/versioning, clock handling, expiration behavior and optimistic-lock retry policy.
-- Score multiplier thresholds, final effect weights/costs and balancing simulations.
+- Final effect weights/costs and balancing simulations.
 - Whether to track extra per-session statistics for the end screen, and how long finished result screens remain retrievable.
 
 **Do not introduce permanent game sessions or answer-attempt persistence without a new explicit decision.**
