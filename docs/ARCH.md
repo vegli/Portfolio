@@ -44,6 +44,15 @@ and returns immutable replacements. Frozen AnswerResult snapshots retain accepte
 answer feedback through refresh/finish and are cleared on next-card assignment.
 No HTTP, persistence or random generation is implemented by these operations.
 
+Phase 2.5 adds CardFactory with injected random.Random and in-memory catalog
+sequences plus used-question IDs. It generates cards using integer weighted rarity
+and effect draws and uniform template/question selection, returning None on question
+exhaustion. Infeasible effect configuration raises ValueError before randomness;
+duplicate catalog IDs are rejected. Fresh card UUIDs are independent of the seeded
+RNG. It neither mutates inputs nor owns session usage tracking or game-over transitions.
+Application handling of NO_QUESTIONS_AVAILABLE, catalog loading and seed scripts
+remain future work; no database or API dependencies are added to the factory.
+
 ## 2. Responsibility boundaries
 
 | Component | Owns |

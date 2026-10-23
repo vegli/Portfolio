@@ -324,7 +324,7 @@ session = session.refresh(now=refresh_time)
 session = session.assign_next_card(next_card, now=assignment_time)
 ```
 
-`GameSession` coordinates `StreakPolicy`, `ScoreCalculator` and `EffectApplier`. Finishing is an internal transition. The future `CardFactory` handles selection/generation; lifecycle methods accept already prepared cards.
+`GameSession` coordinates `StreakPolicy`, `ScoreCalculator` and `EffectApplier`. Finishing is an internal transition. `CardFactory` handles selection/generation; lifecycle methods accept already prepared cards.
 
 ### Draw sequence
 
@@ -336,9 +336,9 @@ session = session.assign_next_card(next_card, now=assignment_time)
 
 4. Roll effects using **rarity compatibility, independent budgets, distinct effect types, random target count and weighted definitions**.
 
-5. Create a `DrawnCard` and mark its question as used for this session.
+5. CardFactory creates a `DrawnCard` without modifying session state. GameSession activation or next-card assignment marks its question as used.
 
-6. If selection is impossible, try another suitable template; finish only if no viable combination remains.
+6. Eligibility is resolved before random selection; no retry loop is needed. Return `None` if no unused compatible template/question pair exists. Application orchestration will handle exhaustion; CardFactory does not finish sessions.
 
 ## 5. Agreed use-case behavior (MVP)
 
@@ -438,9 +438,9 @@ Effect TIME values remain integer seconds as in the catalog; session time is int
 milliseconds. EffectApplier converts effect seconds to milliseconds.
 No provisional balancing magnitudes or rarity budget caps are enforced.
 
-Effect snapshots intentionally contain no cost or rarity. The future CardFactory
-must enforce total cost and rarity compatibility using EffectDefinition entries.
-It must also perform random selection; these behaviors are not implemented yet.
+Effect snapshots intentionally contain no cost or rarity. CardFactory enforces
+total cost and rarity compatibility using EffectDefinition entries before producing
+rolled snapshots, and performs the agreed random selection.
 
 PlayerState permits negative HP and score, without arbitrary caps. Negative total
 scores are an agreed scoring rule; there is no lower score bound.
@@ -521,8 +521,35 @@ Before evaluation, exhausted time wins over already-depleted HP; neither score n
 effects are granted. After an accepted answer, HP depletion wins over simultaneous
 time depletion. Expiry returns a FINISHED replacement without an answer result for
 an unevaluated card. Finished sessions reject gameplay actions. Question exhaustion
-remains for future CardFactory/application orchestration; no public finish operation,
+remains for future application orchestration using CardFactory exhaustion; no public finish operation,
 persistence logic, or random selection is introduced here.
+
+### Phase 2.5 CardFactory
+
+`CardFactory(rng: random.Random).draw(questions, templates, effect_definitions,
+used_question_ids) -> DrawnCard | None` accepts ordered catalog sequences and a
+set/frozenset of used UUIDs. It retains only the RNG, never content or session state.
+Inputs are read without mutation. Duplicate IDs within a catalog raise ValueError;
+invalid collection/element types raise TypeError. Entity field validation is reused.
+
+Eligible templates have at least one unused compatible question. No eligible pair
+returns None without consuming randomness. Every eligible template's nonzero outcome
+budget is checked for at least one affordable, trigger/rarity-compatible definition
+before randomness is consumed. Infeasibility raises ValueError naming the template
+and outcome; it does not silently remove a template or return exhaustion. Templates
+without compatible unused questions need no effect feasibility check for this draw.
+
+Rarity uses integer cumulative weights 70/20/10 over eligible rarities, followed by
+uniform template and compatible-question choices. Each outcome independently rolls
+a uniform target count based on initially affordable distinct types. Weighted integer
+draws select definitions, filtering remaining cost and used types after each choice.
+The roll may stop before its target and need not spend the entire budget. Zero budgets
+produce no effects; positive budgets always produce at least one.
+
+Identical seeds and ordered inputs reproduce selection content, not card IDs: each
+card receives a fresh uuid4 independent of the seeded RNG. GameSession owns marking
+a question used. Mapping None to NO_QUESTIONS_AVAILABLE remains application work.
+No provisional catalog values, seeds, persistence or API integration are added here.
 
 ## 8. Recently finalized backend rules
 
@@ -541,4 +568,4 @@ persistence logic, or random selection is introduced here.
 
 ## 10. Next step
 
-Consult [`GAME_DESIGN.md`](GAME_DESIGN.md) for use cases and [`ARCH.md`](ARCH.md) for agreed storage choices. Next: implement CardFactory and application orchestration around the tested domain lifecycle. PostgreSQL and Redis integration follow domain work.
+Consult [`GAME_DESIGN.md`](GAME_DESIGN.md) for use cases and [`ARCH.md`](ARCH.md) for agreed storage choices. Next: implement application orchestration around CardFactory and the tested domain lifecycle, including handling question exhaustion. PostgreSQL and Redis integration follow domain work.

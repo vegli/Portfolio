@@ -177,6 +177,14 @@ A drawn card is a `CardTemplate` + compatible `Question` + rolled `Effect` colle
 
 **Agreed algorithm:** Separate positive/negative budgets; 0 means no effects and >0 guarantees at least one fitting effect. Budget is an upper bound. Maximum one effect per HP/SCORE/TIME type per outcome. Choose target count uniformly from 1..min(3, eligible distinct types), then use weighted random from budget-fitting, rarity-compatible definitions; stop early if candidates run out. Effect definitions carry `cost` and `weight`. The provisional magnitude/cost catalog is in `DOMAIN.md`; its numbers still need playtesting.
 
+Phase 2.5 implements this selection in CardFactory with an injected random.Random.
+The factory returns None when no unused compatible template/question pair remains;
+it does not modify used questions or finish sessions. GameSession records usage when
+a generated card is assigned. Infeasible nonzero effect budgets on any eligible
+template raise a configuration ValueError before randomness is consumed, rather than
+changing draw probabilities. Duplicate catalog IDs are rejected. Equal seeds and
+ordered inputs reproduce content choices while card UUIDs remain independently fresh.
+
 ## 6. Scoring and streak behavior
 
 Only **correct answers** build a streak. An incorrect answer immediately resets it to zero; there is no incorrect-answer streak.
@@ -284,4 +292,4 @@ Treat client-submitted HP, time, score, streak, effects, difficulty or success f
 - API payloads/status codes and Redis conflict retry details.
 - Final result statistics and resume-after-refresh UX.
 
-**Next:** implement CardFactory and application orchestration around the Phase 2.4 lifecycle; persistence follows domain work.
+**Next:** implement application orchestration around CardFactory and the Phase 2.4 lifecycle, including handling question exhaustion; persistence follows domain work.
