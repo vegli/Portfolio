@@ -29,6 +29,14 @@ rounding only base awards and filtering effects by SCORE type and answer outcome
 Neither service mutates snapshots or depends on FastAPI or persistence. Session
 answer orchestration remains to be implemented.
 
+Phase 2.3 adds stateless `EffectApplier` in `app/domain/`. It returns replacement
+player state and remaining milliseconds after applying matching HP/TIME effects,
+preserving score and streak. SCORE effects are handled exclusively by
+ScoreCalculator. TIME seconds are converted to milliseconds; resulting time is
+clamped at zero with no upper cap, while HP is uncapped. The service has no clock
+or persistence dependencies and performs no session transitions. Future answer
+orchestration must reject expired answers before applying effects.
+
 ## 2. Responsibility boundaries
 
 | Component | Owns |

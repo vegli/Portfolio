@@ -222,6 +222,7 @@ Round the multiplied base award **half-up to the nearest integer**, before addin
 - At activation, the game starts with **60 seconds**, measured authoritatively by the backend.
 - Timer does not pause while answering, reviewing a result, or waiting to click Next Card.
 - Positive/negative TIME effects modify remaining time immediately upon accepted answer.
+- TIME effect seconds are converted to milliseconds; the result is clamped at zero without an upper cap. HP is not clamped, including below zero.
 - Remaining time may exceed 60s; HP may exceed 100.
 - Finish when HP ≤ 0 or time ≤ 0. If no unused compatible question can be drawn, finish with `NO_QUESTIONS_AVAILABLE`.
 - Redis key TTL is separate from game time: TTL cleans up session data; it does not determine who won or lost.

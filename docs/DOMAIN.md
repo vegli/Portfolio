@@ -435,7 +435,7 @@ nonnegative budgets and streaks, signed nonzero effects, positive integer defini
 costs/weights, and question/template difficulty compatibility. Each outcome permits
 at most one effect per type, with effects present exactly when its budget is positive.
 Effect TIME values remain integer seconds as in the catalog; session time is integer
-milliseconds. A future effect-application operation must convert seconds to milliseconds.
+milliseconds. EffectApplier converts effect seconds to milliseconds.
 No provisional balancing magnitudes or rarity budget caps are enforced.
 
 Effect snapshots intentionally contain no cost or rarity. The future CardFactory
@@ -456,7 +456,7 @@ recorded in the used-question set. Card assignment is a future operation, not a 
 ACTIVE / AWAITING_CARD snapshot.
 
 These checks validate snapshot structure, not transition history. Answer evaluation,
-repeat-draw prevention across transitions, effect application, timer advancement and
+repeat-draw prevention across transitions, timer advancement and
 game-over priority will be implemented and tested with the corresponding operations.
 AWAITING_NEXT_CARD will eventually retain the last accepted answer result for refresh;
 no result representation or extra statistics are introduced in Phase 2.1.
@@ -474,6 +474,22 @@ It uses `Fraction` for exact multiplication and half-up rounding, then adds only
 outcome-matching SCORE effects. The initial base-point mapping lives in this
 calculator. Neither service mutates sessions or player state or depends on FastAPI
 or persistence. Answer orchestration remains future work.
+
+### Phase 2.3 effect application
+
+`effect_applier.py` provides stateless `EffectApplier.apply(player,
+remaining_time_ms, is_correct, effects=()) -> tuple[PlayerState, int]`, returning
+a replacement player and updated remaining time. Effects may be a tuple or list
+of validated `Effect` values. Only outcome-matching HP and TIME effects apply;
+SCORE effects remain exclusively owned by ScoreCalculator.
+
+HP has no clamp. TIME deltas are converted from seconds to milliseconds and
+the resulting time is clamped at zero, without an upper cap. Score and streak
+are preserved, and inputs are never mutated. Input time must be a nonnegative
+integer (not a boolean); zero is accepted as an arithmetic input. Future answer
+orchestration must check expiry before calling this service. This component
+does not read a clock, change session phases, or determine game-over reasons.
+Card effect uniqueness, budgets and rarity are validated elsewhere.
 
 ## 8. Recently finalized backend rules
 
