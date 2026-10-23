@@ -50,8 +50,9 @@ and effect draws and uniform template/question selection, returning None on ques
 exhaustion. Infeasible effect configuration raises ValueError before randomness;
 duplicate catalog IDs are rejected. Fresh card UUIDs are independent of the seeded
 RNG. It neither mutates inputs nor owns session usage tracking or game-over transitions.
-Application handling of NO_QUESTIONS_AVAILABLE, catalog loading and seed scripts
-remain future work; no database or API dependencies are added to the factory.
+Phase 3.1 coordinates catalog loading and NO_QUESTIONS_AVAILABLE through application
+ports; seed scripts and concrete adapters remain future work. No database or API
+dependencies are added to the factory.
 
 ## 2. Responsibility boundaries
 
@@ -159,7 +160,8 @@ naive timestamps are rejected. Basic input types are checked first, then active-
 expiry precedes semantic gameplay checks. Refresh advances active time and detects
 termination; created/finished sessions remain unchanged. TIME_EXPIRED wins over
 pre-existing HP depletion; HP_DEPLETED wins only for simultaneous post-answer depletion.
-Caller clock acquisition, retry semantics and transport errors remain application work.
+Phase 3.1 defines caller clock acquisition and retry semantics below; transport
+error mapping remains future API work.
 
 ## 7. Concurrency and correctness
 
@@ -177,13 +179,9 @@ Suggested layering:
 ```text
 API routes / request-response DTOs
            ↓
-Application use cases (StartGame, SubmitAnswer, NextCard, GetGameState, FinishGame)
-           ↓
-Domain entities / services / policies
-           ↓
-Repository interfaces
-           ↓
-PostgreSQL & Redis adapters
+Application use cases (StartGame, SubmitAnswer, NextCard, GetGameState)
+           ├── Domain entities / services / policies
+           └── Application repository protocols ← PostgreSQL & Redis adapters
 ```
 
 `StartGame` and **Play Again** use the same `POST /api/v1/games` operation, creating a new UUID-backed session and drawing the first card automatically. `FinishGame` is an internal transition and does not need a public endpoint.
@@ -300,16 +298,135 @@ Network transit time may make a naive local countdown slightly optimistic; accou
 | `422 Unprocessable Entity` | Request schema validation failure (FastAPI) |
 | `500 Internal Server Error` | Unexpected failure; avoid disclosing internal details |
 
-Concurrency conflicts should not blindly retry writes: reload under `WATCH`, reevaluate timer and phase, then either commit one valid mutation or return a suitable conflict. Rate limiting, maximum retry count and idempotency behavior are still to be specified.
+Concurrency conflicts reload and reevaluate authorization, timer and phase before another mutation. Phase 3.1 specifies three total CAS attempts and rejects duplicate submissions; rate limiting remains future work.
 
 ## 9. Open decisions / implementation tasks
 
 - Full-loop domain validation lives in `backend/tests/domain/test_game_loop.py`, using real CardFactory/GameSession components, seeded randomness and explicit timestamps. Application orchestration is not implemented by these tests.
-- Future NextCard orchestration must refresh authoritative time and honor terminal state **before** converting factory exhaustion (`None`) into `NO_QUESTIONS_AVAILABLE`. If time and the question pool are both exhausted, preserve `TIME_EXPIRED`. CardFactory only reports exhaustion; GameSession still lacks a public exhaustion transition. Design a narrowly constrained aggregate transition with the future use case rather than exposing an arbitrary finish operation or mutating snapshots externally. StartGame's empty-pool response remains an open decision in `GAME_DESIGN.md`.
-- Final Pydantic DTO field definitions, precise 401/403/404 behavior, abuse protection and request retry/idempotency strategy.
+- Phase 3.1 implements the constrained exhaustion transition and initial empty-pool failure described below.
+- Final Pydantic DTO field definitions, precise 401/403/404 behavior and abuse protection. Duplicate commands are rejected; HTTP idempotency keys are not implemented.
 - Concrete PostgreSQL DDL, composite correctness constraint, seed scripts and migrations.
-- Redis serializer/versioning, clock handling, expiration behavior and optimistic-lock retry policy.
+- Concrete Redis serializer/schema versioning and transaction integration tests. Application clock, expiration and retry contracts are defined below.
 - Final effect weights/costs and balancing simulations.
 - Whether to track extra per-session statistics for the end screen, and how long finished result screens remain retrievable.
 
 **Do not introduce permanent game sessions or answer-attempt persistence without a new explicit decision.**
+
+
+## 10. Application layer — Phase 3.1
+
+`app/application/` contains four async use cases, immutable safe result models,
+application errors and small dependency protocols. It has no FastAPI, ORM or Redis
+imports. The domain does not depend on repository interfaces. No generic Unit of
+Work, command bus or cross-store transaction is required.
+
+### Ports and persistence ownership
+
+- `CatalogRepository.load() -> GameCatalogs` supplies coherent tuples of questions,
+  templates and effect definitions. No application cache is introduced.
+- `SessionRepository.create(session, token_verifier=...)` inserts a fresh session
+  only, with an initial 15-minute TTL. Duplicate IDs are persistence failures.
+- `get(id) -> StoredSession | None` hydrates authoritative domain state without
+  renewing TTL. The internal envelope contains a version and token verifier.
+- `compare_and_swap(session, expected_version=..., expiry=...) -> bool` checks the
+  existing version, replaces the snapshot and increments the version atomically.
+  It preserves the verifier, returns false for conflicts/missing keys, and must
+  never recreate expired keys. Infrastructure failures raise `PersistenceFailure`.
+
+The future adapter owns WATCH/MULTI/EXEC, serialization and static-definition
+hydration. It must check the version under WATCH and commit both state/version and
+TTL policy atomically. Redis stores dynamic fields, rolled effects, retained
+`last_answer_result`, token verifier and concurrency version; the earlier JSON
+example is illustrative and omits this metadata. PostgreSQL definitions referenced
+by a live session must remain available and stable; mutation/versioning of content
+is outside this phase. Hydration must not regenerate effects or retain raw tokens.
+
+The application owns **three total CAS attempts**. Each retry reloads, reauthorizes,
+reacquires time and revalidates the action. After a third failed CAS, a final
+load/authorization distinguishes missing/expired/inaccessible state from contention;
+only a still-accessible record produces `ConcurrentUpdate`. No blind retry follows
+an operational persistence error. Duplicate answers are rejected rather than
+replayed as successes; GetGameState retrieves retained accepted feedback.
+
+### Time, randomness and authorization
+
+An injected `Clock.now()` supplies aware server timestamps. Domain operations still
+receive explicit `now`; requests cannot provide authoritative timestamps. Clock
+regressions fail domain validation. Time is sampled after session hydration and,
+for NextCard, again immediately before assignment/exhaustion. Domain evaluation or
+assignment is the acceptance point, rather than request arrival or eventual storage
+completion. A failed CAS requires a new acceptance check on the next attempt.
+
+A callable provider creates one CardFactory with an independent Random per
+StartGame/NextCard execution. NextCard instantiates it only after authorization,
+refresh and phase checks. Private candidates from failed CAS attempts are discarded;
+a retry may draw again after revalidation. Only committed results are returned.
+Token entropy must come from a separate cryptographic generator, never this RNG.
+
+`SessionTokens.issue()` returns a raw token plus verifier; `verify()` must compare
+fixed-length digests in constant time. Only StartGame's public result contains the
+new token, after successful creation. Secret fields are excluded from dataclass
+reprs; raw tokens are never passed to storage or logged. Production token issuance
+and verification are deferred to the Redis phase; deterministic implementations
+exist only in tests. Missing/expired records and invalid credentials all raise
+`SessionUnavailable`, without exposing state. Authorization precedes domain actions
+and repeats on every reload.
+
+### Use-case behavior and TTL
+
+StartGame creates a new UUID/fresh aggregate, loads catalogs, draws the first card,
+activates using post-generation time, issues a token and creates storage. Initial
+exhaustion raises `NoPlayableQuestions` without persisting a session or issuing a
+token. Play Again uses the same flow. Invalid catalog configuration raises
+`CatalogFailure`, not question exhaustion.
+
+SubmitAnswer refreshes authoritative time before semantic checks and delegates all
+scoring/effects to GameSession.submit_answer(). An already-expired request commits
+termination without evaluating an answer. Its result marks `accepted=False`, even
+if feedback from an earlier accepted answer is retained.
+
+NextCard authorizes, refreshes time and validates ACTIVE/AWAITING_NEXT_CARD before
+loading catalogs or drawing. It rechecks time through assignment or the constrained
+`finish_no_questions_available(now=...)` aggregate operation after generation. That
+operation accepts only ACTIVE/AWAITING_NEXT_CARD, refreshes first to preserve timeout
+priority, and exposes no arbitrary finish reason. The application calls it only
+when the factory returns None. Accepted feedback survives exhaustion.
+
+GetGameState projects a refreshed nonterminal snapshot without writing it. Newly
+detected terminal transitions are saved by CAS with PRESERVE. A conflicting answer
+with a TIME bonus forces a reload/recalculation, preventing stale expiration from
+overwriting accepted gameplay. Already finished sessions need no write.
+
+| Successful outcome | TTL policy |
+| --- | --- |
+| Creation | Initial 15 minutes |
+| Accepted answer, including terminal answer effects | RENEW_ACTIVITY |
+| Next-card assignment | RENEW_ACTIVITY |
+| Valid NextCard discovers question exhaustion | RENEW_ACTIVITY |
+| Any action/read newly detects timer expiry or pre-existing depletion | PRESERVE |
+| Nonterminal read, rejected action, failed CAS | No TTL change |
+
+PRESERVE retains the existing absolute expiration deadline, never resetting the
+remaining TTL. The game timer remains independent of inactivity cleanup.
+
+### Results, errors and validation
+
+Safe frozen application results contain only application view dataclasses, tuples,
+UUIDs and scalar values. They never contain a GameSession, Question or DrawnCard.
+Unanswered card views have no correct-answer field. Only feedback backed by an
+accepted AnswerResult contains correctness/correct answer; feedback survives refresh
+and finish and clears on next-card assignment. No explanations are returned.
+These models are not final HTTP DTOs.
+
+Application errors distinguish unavailable sessions, initial exhaustion, invalid
+phase/finished games, stale cards, invalid options, exhausted concurrency retries,
+catalog failures and persistence failures. Domain ValueError/TypeError retain their
+invariant meaning; use cases do not parse exception messages or blanket-map domain
+failures to client errors. Expected request checks happen after expiration handling;
+unexpected invariant failures propagate. HTTP mappings remain deferred.
+
+Tests use real domain components, injected clocks/seeded factories and small
+in-memory repositories with version checks, expiration deadlines and controlled
+competing commits. They cover duplicate answers/draws, reauthorization/revalidation,
+retry limits, expiration during preparation, TTL and safe projections. Actual Redis
+atomicity and PostgreSQL hydration require integration tests in later phases.

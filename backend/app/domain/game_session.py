@@ -154,6 +154,16 @@ class GameSession:
             last_answer_result=None,
         )
 
+    def finish_no_questions_available(self, *, now: datetime) -> GameSession:
+        self._validate_now(now)
+        self._require_active()
+        if self.phase is not GamePhase.AWAITING_NEXT_CARD:
+            raise ValueError("session is not awaiting the next card")
+        session = self.refresh(now=now)
+        if session.status is GameStatus.FINISHED:
+            return session
+        return session._finish(GameOverReason.NO_QUESTIONS_AVAILABLE)
+
     def refresh(self, *, now: datetime) -> GameSession:
         self._validate_now(now)
         if self.status is not GameStatus.ACTIVE:

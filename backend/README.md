@@ -50,6 +50,10 @@ The `app/domain/` package contains immutable questions, player state, effects, c
 and session snapshots. Focused invariant tests live in `tests/domain/`.
 Run them separately with `uv run pytest tests/domain`.
 
-Next: implement and unit-test pure Python game rules,
-resolving the relevant open decisions in the design documents first.
-PostgreSQL and Redis integration follow that work.
+`app/application/` coordinates StartGame, SubmitAnswer, NextCard and GetGameState
+through async repository protocols and injected clock/token/factory dependencies.
+Safe immutable views keep domain objects and unanswered correct-answer IDs private.
+Application tests use in-memory fakes: `uv run pytest tests/application`.
+See `docs/ARCH.md` for CAS retries, TTL policies and token contracts.
+Concrete PostgreSQL/Redis adapters, production token handling and gameplay HTTP
+endpoints remain future work.

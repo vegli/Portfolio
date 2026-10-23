@@ -322,6 +322,7 @@ session = session.activate(first_card, now=activation_time)
 session = session.submit_answer(card_id, answer_option_id, now=answer_time)
 session = session.refresh(now=refresh_time)
 session = session.assign_next_card(next_card, now=assignment_time)
+session = session.finish_no_questions_available(now=exhaustion_time)
 ```
 
 `GameSession` coordinates `StreakPolicy`, `ScoreCalculator` and `EffectApplier`. Finishing is an internal transition. `CardFactory` handles selection/generation; lifecycle methods accept already prepared cards.
@@ -520,9 +521,9 @@ are returned unchanged after timestamp validation. No system clock is read.
 Before evaluation, exhausted time wins over already-depleted HP; neither score nor
 effects are granted. After an accepted answer, HP depletion wins over simultaneous
 time depletion. Expiry returns a FINISHED replacement without an answer result for
-an unevaluated card. Finished sessions reject gameplay actions. Question exhaustion
-remains for future application orchestration using CardFactory exhaustion; no public finish operation,
-persistence logic, or random selection is introduced here.
+an unevaluated card. Finished sessions reject gameplay actions. Phase 3.1 adds the
+constrained question-exhaustion transition described below; persistence logic and
+random selection remain outside the aggregate.
 
 ### Phase 2.5 CardFactory
 
@@ -548,7 +549,7 @@ produce no effects; positive budgets always produce at least one.
 
 Identical seeds and ordered inputs reproduce selection content, not card IDs: each
 card receives a fresh uuid4 independent of the seeded RNG. GameSession owns marking
-a question used. Mapping None to NO_QUESTIONS_AVAILABLE remains application work.
+a question used. Phase 3.1 maps None to NO_QUESTIONS_AVAILABLE in NextCard.
 No provisional catalog values, seeds, persistence or API integration are added here.
 
 ## 8. Recently finalized backend rules
@@ -563,9 +564,19 @@ No provisional catalog values, seeds, persistence or API integration are added h
 ## 9. Open decisions / implementation details
 
 - **Balancing catalog and budget ranges** above are provisional; validate with playtesting.
-- **Exact API request/response schemas, Redis retry policy, refresh UX and final result details** remain open.
+- **Exact API request/response schemas, concrete Redis transactions, refresh UX and final result details** remain open. Application retry policy is specified in ARCH.md.
 - **PostgreSQL constraints / migration approach** and final schema are still to be designed.
 
 ## 10. Next step
 
-Consult [`GAME_DESIGN.md`](GAME_DESIGN.md) for use cases and [`ARCH.md`](ARCH.md) for agreed storage choices. Next: implement application orchestration around CardFactory and the tested domain lifecycle, including handling question exhaustion. PostgreSQL and Redis integration follow domain work.
+Consult [`GAME_DESIGN.md`](GAME_DESIGN.md) for use cases and [`ARCH.md`](ARCH.md) for agreed storage choices. Phase 3.1 application orchestration and question exhaustion are implemented. Next: PostgreSQL and Redis adapters, production token handling and HTTP integration.
+
+
+## 11. Phase 3.1 exhaustion boundary
+
+`finish_no_questions_available(now=...)` is valid only for
+ACTIVE/AWAITING_NEXT_CARD. The application invokes it after CardFactory returns
+None. It refreshes authoritative time before finishing, preserving TIME_EXPIRED
+priority and accepted answer feedback. It accepts no arbitrary finish reason.
+Initial exhaustion instead raises application `NoPlayableQuestions` without
+persisting a session. See ARCH.md for application ports, retries and TTL policies.

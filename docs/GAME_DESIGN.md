@@ -62,7 +62,6 @@ stateDiagram-v2
     ACTIVE_NEXT --> ACTIVE_ANSWER: NextCard finds eligible question
     ACTIVE_ANSWER --> FINISHED: HP or time depleted
     ACTIVE_NEXT --> FINISHED: Time depleted or no questions
-    CREATED --> FINISHED: No eligible question at start (proposed handling)
     FINISHED --> [*]
 ```
 
@@ -88,8 +87,8 @@ The diagram's `ACTIVE_ANSWER` / `ACTIVE_NEXT` names are shorthand for `ACTIVE` p
 **Postconditions:** A new independent active game exists with exactly one unanswered current card.
 
 **Edge cases:**
-- No available template/question combination: no playable game can begin. Whether to return a domain error or a finished session with `NO_QUESTIONS_AVAILABLE` **is unresolved**.
-- A repeated Start Game request could create multiple distinct sessions. Request deduplication is **unresolved**.
+- No available template/question combination: raise application error `NoPlayableQuestions`; do not persist a session or issue a token.
+- Repeated Start Game requests create distinct independent sessions; request deduplication is not implemented.
 
 ### UC-02 — SubmitAnswer
 
@@ -111,7 +110,7 @@ The diagram's `ACTIVE_ANSWER` / `ACTIVE_NEXT` names are shorthand for `ACTIVE` p
 
 **Invalid submissions:** Reject answers for an absent/finished session, the wrong phase, nonexistent option, or an already-answered card; never grant rewards twice.
 
-**Implementation details still open:** Exact error codes, retry/idempotency policy and clock handling. The agreed processing order below checks expiry before evaluation, so an already-expired answer cannot receive a TIME bonus. `ARCH.md` specifies Redis optimistic concurrency.
+**Implementation details:** ARCH.md specifies injected server time, three total CAS attempts and duplicate rejection. Exact HTTP error mappings remain open. The processing order below checks expiry before evaluation, so an already-expired answer cannot receive a TIME bonus.
 
 ### UC-03 — NextCard
 
@@ -256,7 +255,7 @@ Treat client-submitted HP, time, score, streak, effects, difficulty or success f
 | Finished session and outcome | Only temporarily for result display; expires from Redis |
 | Accounts, leaderboard, historical analytics | **Not stored in MVP** |
 
-**Agreed:** Redis key `game:session:{uuid}` contains one JSON snapshot with dynamic state and IDs referencing PostgreSQL content; rolled effects are persisted in the snapshot. TTL is 15 minutes of accepted state-changing activity, not game duration, and reads do not refresh it. Use optimistic concurrency with Redis `WATCH/MULTI/EXEC`; exact retry behavior remains to be detailed in `ARCH.md`.
+**Agreed:** Redis key `game:session:{uuid}` contains one JSON snapshot with dynamic state and IDs referencing PostgreSQL content; rolled effects are persisted in the snapshot. TTL is 15 minutes of accepted state-changing activity, not game duration, and reads do not refresh it. Use optimistic concurrency with Redis `WATCH/MULTI/EXEC`; three total application CAS attempts and TTL preservation rules are specified in `ARCH.md`.
 
 ## 10. Example acceptance scenarios
 
@@ -289,7 +288,7 @@ Treat client-submitted HP, time, score, streak, effects, difficulty or success f
 ## 12. Remaining decisions before implementation
 
 - Final balance tuning (effect values, costs, weights and template budgets).
-- API payloads/status codes and Redis conflict retry details.
+- API payloads/status codes and concrete Redis transaction integration.
 - Final result statistics and resume-after-refresh UX.
 
-**Next:** implement application orchestration around CardFactory and the Phase 2.4 lifecycle, including handling question exhaustion; persistence follows domain work.
+**Phase 3.1:** application orchestration and constrained question exhaustion are implemented with in-memory fake tests. Concrete persistence and HTTP adapters follow.
