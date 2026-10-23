@@ -304,6 +304,8 @@ Concurrency conflicts should not blindly retry writes: reload under `WATCH`, ree
 
 ## 9. Open decisions / implementation tasks
 
+- Full-loop domain validation lives in `backend/tests/domain/test_game_loop.py`, using real CardFactory/GameSession components, seeded randomness and explicit timestamps. Application orchestration is not implemented by these tests.
+- Future NextCard orchestration must refresh authoritative time and honor terminal state **before** converting factory exhaustion (`None`) into `NO_QUESTIONS_AVAILABLE`. If time and the question pool are both exhausted, preserve `TIME_EXPIRED`. CardFactory only reports exhaustion; GameSession still lacks a public exhaustion transition. Design a narrowly constrained aggregate transition with the future use case rather than exposing an arbitrary finish operation or mutating snapshots externally. StartGame's empty-pool response remains an open decision in `GAME_DESIGN.md`.
 - Final Pydantic DTO field definitions, precise 401/403/404 behavior, abuse protection and request retry/idempotency strategy.
 - Concrete PostgreSQL DDL, composite correctness constraint, seed scripts and migrations.
 - Redis serializer/versioning, clock handling, expiration behavior and optimistic-lock retry policy.
