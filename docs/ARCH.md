@@ -20,22 +20,29 @@ flowchart TD
 
 Architecture is a **modular monolith**, not microservices. Domain objects and policies should remain independent of FastAPI, Redis and database ORM where practical.
 
-Phase 2.1 implements a flat `app/domain/` package of frozen standard-library dataclasses and enums. Player state and session snapshots are immutable; future operations return validated replacements. Session time uses integer milliseconds and explicitly supplied timezone-aware timestamps. No persistence adapters or lifecycle operations are implemented in this phase. Pure Python game-rule implementation and unit tests precede PostgreSQL and Redis integration.
+Phase 2.1 implements a flat `app/domain/` package of frozen standard-library dataclasses and enums. Player state and session snapshots are immutable; lifecycle operations return validated replacements. Session time uses integer milliseconds and explicitly supplied timezone-aware timestamps. No persistence adapters or lifecycle operations are implemented in this phase. Pure Python game-rule implementation and unit tests precede PostgreSQL and Redis integration.
 
 Phase 2.2 adds stateless `StreakPolicy` and `ScoreCalculator` in `app/domain/`.
 The policy updates streak values and supplies exact `Fraction` multipliers. The
 calculator accepts an already updated streak and returns an integer score delta,
 rounding only base awards and filtering effects by SCORE type and answer outcome.
-Neither service mutates snapshots or depends on FastAPI or persistence. Session
-answer orchestration remains to be implemented.
+Neither service mutates snapshots or depends on FastAPI or persistence. GameSession
+coordinates them in Phase 2.4.
 
 Phase 2.3 adds stateless `EffectApplier` in `app/domain/`. It returns replacement
 player state and remaining milliseconds after applying matching HP/TIME effects,
 preserving score and streak. SCORE effects are handled exclusively by
 ScoreCalculator. TIME seconds are converted to milliseconds; resulting time is
 clamped at zero with no upper cap, while HP is uncapped. The service has no clock
-or persistence dependencies and performs no session transitions. Future answer
-orchestration must reject expired answers before applying effects.
+or persistence dependencies and performs no session transitions. GameSession
+rejects expired answers before applying effects.
+
+Phase 2.4 implements GameSession lifecycle methods `activate`, `submit_answer`,
+`assign_next_card` and `refresh`, with explicit aware `now` timestamps. The aggregate
+validates transitions, IDs and question reuse, coordinates the three domain services,
+and returns immutable replacements. Frozen AnswerResult snapshots retain accepted
+answer feedback through refresh/finish and are cleared on next-card assignment.
+No HTTP, persistence or random generation is implemented by these operations.
 
 ## 2. Responsibility boundaries
 
@@ -136,7 +143,14 @@ Processing order for `SubmitAnswer`:
 6. Resolve Game Over: `HP_DEPLETED` precedes `TIME_EXPIRED` when both arise from the same answer. Otherwise transition to `AWAITING_NEXT_CARD`.
 7. Save the resulting session atomically; return evaluation and updated state. Reveal `correct_answer_id` only in this post-evaluation response. **No answer explanations** for MVP.
 
-The exact definition of clock source, retry semantics and transport errors remains to be finalized during API design.
+The domain accepts explicit aware timestamps. UTC subtraction and integer division
+produce whole elapsed milliseconds; last_updated_at advances by those milliseconds
+rather than directly to now, preserving the submillisecond remainder. Backward or
+naive timestamps are rejected. Basic input types are checked first, then active-session
+expiry precedes semantic gameplay checks. Refresh advances active time and detects
+termination; created/finished sessions remain unchanged. TIME_EXPIRED wins over
+pre-existing HP depletion; HP_DEPLETED wins only for simultaneous post-answer depletion.
+Caller clock acquisition, retry semantics and transport errors remain application work.
 
 ## 7. Concurrency and correctness
 

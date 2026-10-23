@@ -159,7 +159,7 @@ The diagram's `ACTIVE_ANSWER` / `ACTIVE_NEXT` names are shorthand for `ACTIVE` p
 
 **Purpose:** Allow the frontend to reconcile display with the backend (for example after a refresh) while Redis still contains the session.
 
-**Behavior:** Return safe, phase-appropriate state; never reveal the answer to an unanswered card. Recompute/check time on read so a client cannot revive an expired game. The agreed route is `GET /api/v1/games/{id}`; transport details are in `ARCH.md`. During `AWAITING_NEXT_CARD`, state refresh must support retrieving the last accepted answer result. Its domain representation is deferred beyond Phase 2.1.
+**Behavior:** Return safe, phase-appropriate state; never reveal the answer to an unanswered card. Recompute/check time on read so a client cannot revive an expired game. The agreed route is `GET /api/v1/games/{id}`; transport details are in `ARCH.md`. During `AWAITING_NEXT_CARD`, state refresh must support retrieving the last accepted answer result. Phase 2.4 retains a frozen AnswerResult on the session until the next card is assigned, including when refresh finishes the game.
 
 ## 5. Card generation and balancing
 
@@ -227,6 +227,8 @@ Round the multiplied base award **half-up to the nearest integer**, before addin
 - Finish when HP ≤ 0 or time ≤ 0. If no unused compatible question can be drawn, finish with `NO_QUESTIONS_AVAILABLE`.
 - Redis key TTL is separate from game time: TTL cleans up session data; it does not determine who won or lost.
 
+Phase 2.4 uses explicit aware timestamps, UTC elapsed-time calculation and whole integer milliseconds. The stored time reference advances only by whole elapsed milliseconds, preserving submillisecond remainder across actions and refreshes. Created and finished sessions do not advance their timers. If HP and time are already depleted before evaluation, TIME_EXPIRED takes precedence.
+
 **Agreed timer algorithm:** Keep `remaining_time_ms` and `last_updated_at`. On requests, deduct elapsed server time first (clamp at zero), then reject/evaluate the requested action as appropriate. A time-expired answer cannot be rescued by a TIME bonus. Apply effects on an accepted answer; check HP before time for simultaneous post-effect depletion. The frontend countdown is display-only.
 
 ## 8. Response privacy and trust boundary
@@ -282,4 +284,4 @@ Treat client-submitted HP, time, score, streak, effects, difficulty or success f
 - API payloads/status codes and Redis conflict retry details.
 - Final result statistics and resume-after-refresh UX.
 
-**Next:** implement and unit-test remaining pure Python game rules and answer orchestration using the Phase 2.2 scoring services; persistence follows domain work.
+**Next:** implement CardFactory and application orchestration around the Phase 2.4 lifecycle; persistence follows domain work.

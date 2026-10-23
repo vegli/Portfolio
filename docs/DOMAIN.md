@@ -296,9 +296,10 @@ class GameSession:
     current_card: DrawnCard | None
     used_question_ids: frozenset[UUID]
     game_over_reason: GameOverReason | None
+    last_answer_result: AnswerResult | None = None
 ```
 
-`GameSession` is the **aggregate root**. Game state must be changed through domain operations that return validated replacement sessions rather than unrestricted external mutation. Lifecycle operations are not implemented in Phase 2.1.
+`GameSession` is the **aggregate root**. Game state must be changed through domain operations that return validated replacement sessions rather than unrestricted external mutation. Phase 2.4 implements lifecycle operations with explicitly supplied timestamps.
 
 ## 4. Game lifecycle and transitions
 
@@ -314,17 +315,16 @@ flowchart TD
     D -->|HP or time depleted| E
 ```
 
-Conceptual aggregate operations:
+Aggregate operations (each timestamp is supplied by the caller):
 
 ```python
-session = session.start()
-session = session.assign_card(card)
-session = session.submit_answer(answer_id)
-session = session.apply_effect(effect)
-session = session.finish(reason)
+session = session.activate(first_card, now=activation_time)
+session = session.submit_answer(card_id, answer_option_id, now=answer_time)
+session = session.refresh(now=refresh_time)
+session = session.assign_next_card(next_card, now=assignment_time)
 ```
 
-`CardFactory` handles selection/generation, while `ScoreCalculator` and `StreakPolicy` handle their respective calculations. The exact method signatures and orchestration boundaries remain to be worked out.
+`GameSession` coordinates `StreakPolicy`, `ScoreCalculator` and `EffectApplier`. Finishing is an internal transition. The future `CardFactory` handles selection/generation; lifecycle methods accept already prepared cards.
 
 ### Draw sequence
 
@@ -427,7 +427,7 @@ backend/app/domain/
 
 The domain uses only Python's standard library. All dataclasses are frozen;
 options and effects are tuples, and used question IDs are a frozenset. Collection
-inputs are copied into these immutable containers. Future domain operations return
+inputs are copied into these immutable containers. Domain operations return
 validated replacement sessions, including replacement PlayerState values.
 
 Construction enforces question option membership/uniqueness, difficulty bounds,
@@ -452,14 +452,12 @@ There are no clock reads or timer updates during construction. Remaining time ca
 be negative and has no upper cap. ACTIVE snapshots require a current card and either
 AWAITING_ANSWER or AWAITING_NEXT_CARD. FINISHED snapshots have no phase and require
 a reason; unfinished snapshots cannot have a reason. Any current question must be
-recorded in the used-question set. Card assignment is a future operation, not a stable
-ACTIVE / AWAITING_CARD snapshot.
+recorded in the used-question set. Card assignment transitions directly to
+ACTIVE / AWAITING_ANSWER; ACTIVE / AWAITING_CARD is not a stable snapshot.
 
-These checks validate snapshot structure, not transition history. Answer evaluation,
-repeat-draw prevention across transitions, timer advancement and
-game-over priority will be implemented and tested with the corresponding operations.
-AWAITING_NEXT_CARD will eventually retain the last accepted answer result for refresh;
-no result representation or extra statistics are introduced in Phase 2.1.
+Construction checks validate snapshot structure, not transition history. Phase 2.4
+operations enforce transitions and retain accepted answer results for refresh.
+No extra session statistics are collected.
 
 ### Phase 2.2 scoring implementation
 
@@ -473,7 +471,7 @@ streak must already reflect the answer: positive for correct, zero for incorrect
 It uses `Fraction` for exact multiplication and half-up rounding, then adds only
 outcome-matching SCORE effects. The initial base-point mapping lives in this
 calculator. Neither service mutates sessions or player state or depends on FastAPI
-or persistence. Answer orchestration remains future work.
+or persistence. GameSession coordinates them in Phase 2.4.
 
 ### Phase 2.3 effect application
 
@@ -486,10 +484,45 @@ SCORE effects remain exclusively owned by ScoreCalculator.
 HP has no clamp. TIME deltas are converted from seconds to milliseconds and
 the resulting time is clamped at zero, without an upper cap. Score and streak
 are preserved, and inputs are never mutated. Input time must be a nonnegative
-integer (not a boolean); zero is accepted as an arithmetic input. Future answer
-orchestration must check expiry before calling this service. This component
+integer (not a boolean); zero is accepted as an arithmetic input. GameSession
+checks expiry before calling this service. This component
 does not read a clock, change session phases, or determine game-over reasons.
 Card effect uniqueness, budgets and rarity are validated elsewhere.
+
+### Phase 2.4 lifecycle and answer processing
+
+GameSession provides `activate(card, *, now)`, `submit_answer(card_id,
+answer_option_id, *, now)`, `assign_next_card(card, *, now)` and `refresh(*, now)`.
+All return validated immutable snapshots. Activation requires fresh initial state
+and starts the timer when the prepared first card is assigned. Later assignments
+require AWAITING_NEXT_CARD and an unused question. Accepted answers advance streak,
+apply the calculator's score delta once, and apply HP/TIME effects through EffectApplier.
+
+`last_answer_result` holds a frozen AnswerResult with card ID, submitted option ID,
+correctness, correct answer ID, integer score delta and a tuple of matching applied
+effects. It is populated only after acceptance, retained on refresh/finish and cleared
+on the next card. It contains no explanation. Snapshot construction permits a missing
+result for compatibility with existing snapshots, but validates any supplied result
+against the current question/card and disallows it while awaiting an answer.
+
+Timestamps must be aware datetime values and cannot precede last_updated_at. Methods
+validate basic input types before timer calculation; for active sessions, expiration
+then takes precedence over semantic phase/card/option errors. Other invalid actions
+raise TypeError or ValueError and produce no replacement snapshot. The original time
+reference remains available, so a later valid action accounts for elapsed time.
+
+Elapsed time is calculated in UTC using integer timedelta division by one millisecond.
+Only whole elapsed milliseconds are deducted, clamped at zero. The stored reference
+advances by those whole milliseconds, preserving fractional milliseconds across all
+active operations. Refresh never restarts the timer; created and finished sessions
+are returned unchanged after timestamp validation. No system clock is read.
+
+Before evaluation, exhausted time wins over already-depleted HP; neither score nor
+effects are granted. After an accepted answer, HP depletion wins over simultaneous
+time depletion. Expiry returns a FINISHED replacement without an answer result for
+an unevaluated card. Finished sessions reject gameplay actions. Question exhaustion
+remains for future CardFactory/application orchestration; no public finish operation,
+persistence logic, or random selection is introduced here.
 
 ## 8. Recently finalized backend rules
 
@@ -508,4 +541,4 @@ Card effect uniqueness, budgets and rarity are validated elsewhere.
 
 ## 10. Next step
 
-Consult [`GAME_DESIGN.md`](GAME_DESIGN.md) for use cases and [`ARCH.md`](ARCH.md) for agreed storage choices. Next: implement and unit-test remaining pure Python game rules and answer orchestration. PostgreSQL and Redis integration follow domain work.
+Consult [`GAME_DESIGN.md`](GAME_DESIGN.md) for use cases and [`ARCH.md`](ARCH.md) for agreed storage choices. Next: implement CardFactory and application orchestration around the tested domain lifecycle. PostgreSQL and Redis integration follow domain work.
