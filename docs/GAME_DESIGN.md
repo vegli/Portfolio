@@ -292,3 +292,16 @@ Treat client-submitted HP, time, score, streak, effects, difficulty or success f
 - Final result statistics and resume-after-refresh UX.
 
 **Phase 3.1:** application orchestration and constrained question exhaustion are implemented with in-memory fake tests. Concrete persistence and HTTP adapters follow.
+
+## Approved PostgreSQL content foundation
+
+PostgreSQL stores questions, answer options, templates, effects and template-effect
+eligibility associations with UUID keys. Redis remains authoritative for ephemeral
+sessions; no PostgreSQL session/history tables are introduced. Exactly four options
+and one correct answer remain domain invariants.
+
+Associations narrow eligible effect pools without overriding values, rarity rules,
+budgets or weighted selection. PostgreSQL catalog integration now supplies explicit
+template-to-effect UUID mappings to CardFactory through GameCatalogs. Existing
+in-memory callers may omit the mapping to retain shared-pool behavior. See ARCH.md
+section 4 for hydration, validation and seed semantics.

@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -8,3 +9,8 @@ class Settings(BaseSettings):
 
     name: str = "Developer Portfolio & Playground API"
     debug: bool = False
+    database_url: str = Field(
+        default="postgresql+psycopg://playground:playground@localhost:5432/playground",
+        validation_alias="DATABASE_URL",
+        repr=False,
+    )

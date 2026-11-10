@@ -23,6 +23,7 @@ class StartGame:
             card = self.card_factory().draw(
                 catalogs.questions, catalogs.templates, catalogs.effect_definitions,
                 session.used_question_ids,
+                template_effect_ids=catalogs.template_effect_ids,
             )
         except ValueError as exc:
             raise CatalogFailure("Invalid card catalog configuration") from exc

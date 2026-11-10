@@ -580,3 +580,16 @@ None. It refreshes authoritative time before finishing, preserving TIME_EXPIRED
 priority and accepted answer feedback. It accepts no arbitrary finish reason.
 Initial exhaustion instead raises application `NoPlayableQuestions` without
 persisting a session. See ARCH.md for application ports, retries and TTL policies.
+
+## Approved PostgreSQL content foundation
+
+PostgreSQL stores questions, answer options, templates, effects and template-effect
+eligibility associations with UUID keys. Redis remains authoritative for ephemeral
+sessions; no PostgreSQL session/history tables are introduced. Exactly four options
+and one correct answer remain domain invariants.
+
+Associations narrow eligible effect pools without overriding values, rarity rules,
+budgets or weighted selection. PostgreSQL catalog integration now supplies explicit
+template-to-effect UUID mappings to CardFactory through GameCatalogs. Existing
+in-memory callers may omit the mapping to retain shared-pool behavior. See ARCH.md
+section 4 for hydration, validation and seed semantics.

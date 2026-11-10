@@ -1,4 +1,4 @@
-from collections.abc import Sequence, Set
+from collections.abc import Mapping, Sequence, Set
 from random import Random
 from uuid import UUID, uuid4
 
@@ -27,6 +27,8 @@ class CardFactory:
         templates: Sequence[CardTemplate],
         effect_definitions: Sequence[EffectDefinition],
         used_question_ids: Set[UUID],
+        *,
+        template_effect_ids: Mapping[UUID, frozenset[UUID]] | None = None,
     ) -> DrawnCard | None:
         """Draw a card, return None for exhaustion, or reject infeasible configuration."""
         self._validate_catalog(questions, Question)
@@ -37,6 +39,7 @@ class CardFactory:
         if any(not isinstance(value, UUID) for value in used_question_ids):
             raise TypeError("used question IDs must contain UUID values")
 
+        pools = self._effect_pools(templates, effect_definitions, template_effect_ids)
         unused = tuple(question for question in questions if question.id not in used_question_ids)
         eligible = []
         for template in templates:
@@ -51,7 +54,7 @@ class CardFactory:
                 (EffectTrigger.CORRECT, template.positive_effect_budget),
                 (EffectTrigger.INCORRECT, template.negative_effect_budget),
             ):
-                if budget and not self._eligible_effects(template, trigger, budget, effect_definitions):
+                if budget and not self._eligible_effects(template, trigger, budget, pools[template.id]):
                     raise ValueError(f"template {template.id} has no feasible {trigger.value} effects")
 
         rarities = tuple(rarity for rarity in CardRarity
@@ -68,12 +71,35 @@ class CardFactory:
         )
         question = self._rng.choice(compatible)
         positive = self._roll_effects(
-            template, EffectTrigger.CORRECT, template.positive_effect_budget, effect_definitions,
+            template, EffectTrigger.CORRECT, template.positive_effect_budget, pools[template.id],
         )
         negative = self._roll_effects(
-            template, EffectTrigger.INCORRECT, template.negative_effect_budget, effect_definitions,
+            template, EffectTrigger.INCORRECT, template.negative_effect_budget, pools[template.id],
         )
         return DrawnCard(uuid4(), template, question, positive + negative)
+
+    @staticmethod
+    def _effect_pools(
+        templates: Sequence[CardTemplate], definitions: Sequence[EffectDefinition],
+        associations: Mapping[UUID, frozenset[UUID]] | None,
+    ) -> dict[UUID, tuple[EffectDefinition, ...]]:
+        if associations is None:
+            return {template.id: tuple(definitions) for template in templates}
+        if not isinstance(associations, Mapping):
+            raise TypeError("template effect associations must be a mapping")
+        template_ids = {template.id for template in templates}
+        effect_ids = {definition.id for definition in definitions}
+        if set(associations) != template_ids:
+            raise ValueError("effect associations must include exactly the catalog templates")
+        for ids in associations.values():
+            if not isinstance(ids, Set) or any(not isinstance(id, UUID) for id in ids):
+                raise TypeError("associated effect IDs must be UUID sets")
+            if not ids <= effect_ids:
+                raise ValueError("effect association references an unknown effect")
+        return {
+            template.id: tuple(d for d in definitions if d.id in associations[template.id])
+            for template in templates
+        }
 
     @staticmethod
     def _validate_catalog(

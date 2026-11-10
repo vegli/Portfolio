@@ -5,8 +5,11 @@ description = "FastAPI backend for Developer Portfolio & Playground"
 readme = "README.md"
 requires-python = ">=3.14,<3.15"
 dependencies = [
+    "alembic>=1.16,<2",
     "fastapi>=0.159.1",
+    "psycopg[binary]>=3.2,<4",
     "pydantic-settings>=2.16.1",
+    "sqlalchemy[asyncio]>=2.0,<3",
     "uvicorn>=0.54.0",
 ]
 

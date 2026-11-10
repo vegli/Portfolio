@@ -251,3 +251,51 @@ def test_generated_cards_integrate_with_session(question):
     assert len(assigned.used_question_ids) == 2
     assert assigned.last_answer_result is None
     assert factory.draw(questions, templates, (), assigned.used_question_ids) is None
+
+
+def test_associations_filter_before_weighted_selection(question):
+    allowed = definition(weight=7)
+    other = definition(weight=999, value=20)
+    card_template = template(positive=1)
+    rng = ScriptedRandom([0, 6], [0, 0], [1])
+    card = CardFactory(rng).draw(
+        [question], [card_template], [other, allowed], set(),
+        template_effect_ids={card_template.id: frozenset({allowed.id})},
+    )
+    assert card.effects == (Effect(allowed.type, allowed.value, allowed.trigger),)
+    assert rng.ranges == [70, 7]
+
+
+@pytest.mark.parametrize('case', ['missing_template', 'unknown_template', 'unknown_effect', 'empty', 'wrong_rarity', 'expensive'])
+def test_invalid_associations_fail_before_randomness(question, case):
+    card_template = template(positive=1)
+    effect = definition()
+    associations = {card_template.id: frozenset({effect.id})}
+    if case == 'missing_template':
+        associations = {}
+    elif case == 'unknown_template':
+        associations[uuid4()] = frozenset()
+    elif case == 'unknown_effect':
+        associations[card_template.id] = frozenset({uuid4()})
+    elif case == 'empty':
+        associations[card_template.id] = frozenset()
+    elif case == 'wrong_rarity':
+        effect = replace(effect, rarity=EffectRarity.EPIC)
+    else:
+        effect = replace(effect, cost=2)
+    rng = ScriptedRandom()
+    with pytest.raises(ValueError):
+        CardFactory(rng).draw([question], [card_template], [effect], set(), template_effect_ids=associations)
+    assert rng.ranges == []
+
+
+def test_explicit_full_pool_preserves_seeded_selection(question):
+    templates = [template(r, 3, 3) for r in CardRarity]
+    definitions = [definition(kind, rarity, trigger) for kind in EffectType
+                   for rarity in EffectRarity for trigger in EffectTrigger]
+    associations = {t.id: frozenset(d.id for d in definitions) for t in templates}
+    legacy, explicit = CardFactory(Random(42)), CardFactory(Random(42))
+    for _ in range(20):
+        a = legacy.draw([question], templates, definitions, set())
+        b = explicit.draw([question], templates, definitions, set(), template_effect_ids=associations)
+        assert (a.template, a.question, a.effects) == (b.template, b.question, b.effects)

@@ -1,5 +1,7 @@
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from types import MappingProxyType
 from uuid import UUID
 
 from app.domain.card import CardTemplate
@@ -18,6 +20,13 @@ class GameCatalogs:
     questions: tuple[Question, ...]
     templates: tuple[CardTemplate, ...]
     effect_definitions: tuple[EffectDefinition, ...]
+    template_effect_ids: Mapping[UUID, frozenset[UUID]] | None = None
+
+    def __post_init__(self) -> None:
+        if self.template_effect_ids is not None:
+            object.__setattr__(self, "template_effect_ids", MappingProxyType({
+                key: frozenset(values) for key, values in self.template_effect_ids.items()
+            }))
 
 
 @dataclass(frozen=True)

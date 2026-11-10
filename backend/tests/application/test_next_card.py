@@ -76,8 +76,8 @@ def test_expiration_during_preparation_wins(env, exhausted, delay_at):
         env.catalogs.on_load = lambda: env.clock.advance(60)
     else:
         class SlowFactory(CardFactory):
-            def draw(self, *args):
-                card = super().draw(*args)
+            def draw(self, *args, **kwargs):
+                card = super().draw(*args, **kwargs)
                 env.clock.advance(60)
                 return card
         env.next.card_factory = lambda: SlowFactory(Random(1))
