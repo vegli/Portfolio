@@ -95,3 +95,23 @@ class SQLAlchemyCatalogRepository:
             raise CatalogFailure(f"Invalid PostgreSQL catalog: {exc}") from exc
         except SQLAlchemyError as exc:
             raise CatalogFailure("Unable to load PostgreSQL catalog") from exc
+
+    async def load_card_content(self, question_id: UUID, template_id: UUID) -> tuple[Question, CardTemplate]:
+        """Load stable definitions referenced by a session, including inactive content."""
+        try:
+            async with self.sessions() as session, session.begin():
+                await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
+                question = await session.get(models.Question, question_id)
+                template = await session.get(models.CardTemplate, template_id)
+                if question is None or template is None:
+                    raise ValueError('referenced card content is missing')
+                options = (await session.scalars(
+                    select(models.AnswerOption).where(models.AnswerOption.question_id == question_id)
+                    .order_by(models.AnswerOption.position)
+                )).all()
+                return hydrate_question(question, list(options)), CardTemplate(
+                    _uuid(template.id), CardRarity(template.rarity), template.min_difficulty,
+                    template.max_difficulty, template.positive_effect_budget, template.negative_effect_budget,
+                )
+        except (ValueError, TypeError, SQLAlchemyError):
+            raise CatalogFailure('Unable to hydrate referenced card content') from None

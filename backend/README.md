@@ -55,13 +55,13 @@ through async repository protocols and injected clock/token/factory dependencies
 Safe immutable views keep domain objects and unanswered correct-answer IDs private.
 Application tests use in-memory fakes: `uv run pytest tests/application`.
 See `docs/ARCH.md` for CAS retries, TTL policies and token contracts.
-The PostgreSQL catalog adapter is implemented. Redis adapters, production token
-handling and gameplay HTTP endpoints remain future work.
+PostgreSQL catalog loading, Redis session storage and secure token handling are
+implemented. Gameplay HTTP endpoints and application lifespan wiring remain future work.
 
 ## PostgreSQL content database
 
 From the repository root: `docker compose up -d --wait`. Compose credentials are
-for local development. Only PostgreSQL is containerized in this phase.
+for local development. PostgreSQL and Redis are containerized; the backend runs locally.
 
 From `backend/`:
 
@@ -117,3 +117,69 @@ TEST_DATABASE_URL=postgresql+psycopg://playground:playground@localhost:5432/play
 
 Integration tests use isolated temporary schemas, including corruption scenarios
 that remove constraints only inside those schemas. Use a dedicated test database.
+
+## Redis sessions and local services
+
+From the repository root:
+
+```sh
+docker compose up -d --wait
+docker compose ps
+docker compose exec postgres pg_isready -U playground -d playground
+docker compose exec redis redis-cli ping
+```
+
+Compose runs official Redis 8 on `127.0.0.1:6379`. Redis persistence is disabled
+(`save ""`, `appendonly no`) because sessions are temporary; restarting Redis loses
+sessions. PostgreSQL retains its existing named volume. Local Redis has no password
+and must remain bound to localhost. Configure authentication/TLS through `REDIS_URL`
+for a separately managed deployment.
+
+If port 6379 is occupied by the older standalone container, inspect it first:
+
+```sh
+docker ps -a --filter name=playground-redis
+docker inspect playground-redis --format '{{json .Mounts}} {{json .Config.Cmd}}'
+```
+
+Do not remove containers or volumes. If the old container can safely be stopped
+(after checking its data/persistence requirements), run `docker stop playground-redis`,
+then start Compose. Stopping preserves the container and volumes, but volatile Redis
+data may be lost. Alternatively, keep it running and change the Compose Redis host
+port to an unused port such as 6380, updating `REDIS_URL` and `TEST_REDIS_URL` to match.
+No application code automatically stops or removes existing containers.
+
+`REDIS_URL` defaults to `redis://localhost:6379/0` without the `APP_` prefix.
+The session TTL is fixed at the agreed 900 seconds, separate from the game timer.
+Construct the adapters together with the existing catalog repository:
+
+```python
+from app.persistence.redis_sessions import create_redis_client, RedisSessionRepository
+from app.security.session_tokens import SecureSessionTokens
+
+redis = create_redis_client(settings.redis_url)
+sessions = RedisSessionRepository(redis, catalogs.load_card_content)
+tokens = SecureSessionTokens()
+# Inject sessions and tokens into existing application use cases.
+# The owner must await redis.aclose() and engine.dispose() at shutdown.
+```
+
+Reads hydrate referenced PostgreSQL questions/templates, including inactive content
+already in a session. Do not edit/delete referenced static definitions while sessions
+are live. Rolled effects and answer feedback are preserved, never regenerated.
+Malformed/unsupported snapshots or missing definitions raise `PersistenceFailure`;
+missing/expired Redis keys return `None`. Tokens are cryptographically generated;
+only SHA-256 verifiers enter storage.
+
+Run all tests against local development services from `backend/`:
+
+```sh
+TEST_DATABASE_URL=postgresql+psycopg://playground:playground@localhost:5432/playground \
+TEST_REDIS_URL=redis://localhost:6379/0 uv run pytest -q
+```
+
+Without the corresponding test URL, integration tests skip. Redis tests use unique
+UUID keys and delete only their own keys; they never flush the database. PostgreSQL
+tests use isolated schemas. Real Redis tests cover WATCH conflicts, simultaneous
+answers/draws, expiry during a transaction, absolute TTL preservation/renewal, and
+malformed snapshots. Tests set expiration timestamps directly instead of sleeping.

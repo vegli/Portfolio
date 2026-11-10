@@ -187,7 +187,7 @@ Conceptual minimum contents:
 
 Persist only **dynamic session data** and the references to game definitions; retrieve static question/option/template data from PostgreSQL when needed. Keep the rolled effects in Redis so they cannot be regenerated on subsequent requests.
 
-- Initial proposed Redis TTL: **15 minutes since the last successful allowed state-changing action**.
+- Redis TTL: **15 minutes since the last successful allowed state-changing action**.
 - TTL is cleanup, **not** the game timer; ordinary reads must not extend it.
 - When the key expires, the session/result is unavailable; there is no permanent game history.
 - Domain session models are serialized/deserialized at the repository boundary.
@@ -359,7 +359,7 @@ Concurrency conflicts reload and reevaluate authorization, timer and phase befor
 - Phase 3.1 implements the constrained exhaustion transition and initial empty-pool failure described below.
 - Final Pydantic DTO field definitions, precise 401/403/404 behavior and abuse protection. Duplicate commands are rejected; HTTP idempotency keys are not implemented.
 - PostgreSQL catalog hydration, association-aware generation and starter seeds are implemented; production content expansion and balancing remain.
-- Concrete Redis serializer/schema versioning and transaction integration tests. Application clock, expiration and retry contracts are defined below.
+- Redis schema version 1, secure tokens and real transaction integration tests are implemented; API lifespan wiring remains future work.
 - Final effect weights/costs and balancing simulations.
 - Whether to track extra per-session statistics for the end screen, and how long finished result screens remain retrievable.
 
@@ -386,8 +386,8 @@ Work, command bus or cross-store transaction is required.
   It preserves the verifier, returns false for conflicts/missing keys, and must
   never recreate expired keys. Infrastructure failures raise `PersistenceFailure`.
 
-The future adapter owns WATCH/MULTI/EXEC, serialization and static-definition
-hydration. It must check the version under WATCH and commit both state/version and
+The Redis adapter owns WATCH/MULTI/EXEC, serialization and static-definition
+hydration. It checks the version under WATCH and commits both state/version and
 TTL policy atomically. Redis stores dynamic fields, rolled effects, retained
 `last_answer_result`, token verifier and concurrency version; the earlier JSON
 example is illustrative and omits this metadata. PostgreSQL definitions referenced
@@ -419,9 +419,9 @@ Token entropy must come from a separate cryptographic generator, never this RNG.
 `SessionTokens.issue()` returns a raw token plus verifier; `verify()` must compare
 fixed-length digests in constant time. Only StartGame's public result contains the
 new token, after successful creation. Secret fields are excluded from dataclass
-reprs; raw tokens are never passed to storage or logged. Production token issuance
-and verification are deferred to the Redis phase; deterministic implementations
-exist only in tests. Missing/expired records and invalid credentials all raise
+reprs; raw tokens are never passed to storage or logged. SecureSessionTokens issues
+32 random bytes as URL-safe text and verifies SHA-256 digests with compare_digest.
+Deterministic token implementations exist only in tests. Missing/expired records and invalid credentials all raise
 `SessionUnavailable`, without exposing state. Authorization precedes domain actions
 and repeats on every reload.
 
@@ -481,5 +481,55 @@ unexpected invariant failures propagate. HTTP mappings remain deferred.
 Tests use real domain components, injected clocks/seeded factories and small
 in-memory repositories with version checks, expiration deadlines and controlled
 competing commits. They cover duplicate answers/draws, reauthorization/revalidation,
-retry limits, expiration during preparation, TTL and safe projections. Actual Redis
-atomicity and PostgreSQL hydration require integration tests in later phases.
+retry limits, expiration during preparation, TTL and safe projections. Real Redis
+atomicity, PostgreSQL hydration and combined storage flows now have integration tests.
+
+
+## 11. Redis session storage and secure tokens
+
+`RedisSessionRepository` implements the existing application protocol. It receives
+an async Redis client and the catalog adapter's `load_card_content` callable. That
+lookup fetches the exact question/template IDs, including inactive definitions,
+within a coherent PostgreSQL transaction. The ordinary catalog still excludes
+inactive content from new draws. Missing or invalid references fail explicitly;
+static content must remain stable during live sessions.
+
+`session_codec.py` owns JSON schema version 1 independently of Redis commands.
+Strict Pydantic storage models reject unknown fields, invalid primitive types,
+unsupported versions, naive timestamps, malformed UUIDs/enums and invalid feedback.
+Domain constructors validate hydrated state. JSON contains session ID, timestamp,
+status/phase, player state, remaining milliseconds, used question IDs, rolled
+current-card effects and static content IDs, retained feedback, integer concurrency
+version and a hex SHA-256 token verifier. Static questions/options/templates are
+not copied into Redis. No pickle, raw tokens, or ORM objects are serialized.
+Missing/expired keys return None; corrupt data and storage/hydration failures raise
+sanitized PersistenceFailure errors. No automatic repair or schema migration occurs.
+
+Creation uses SET NX EX 900 with version 0. A duplicate ID fails without overwriting
+state or extending TTL. Compare-and-swap WATCHes one key, reads its version/verifier,
+and returns False for missing keys or mismatched versions. MULTI/EXEC writes the
+replacement with SET XX and increments the version. RENEW_ACTIVITY uses EX 900;
+PRESERVE uses KEEPTTL, preserving the absolute deadline. WATCH notices expiration,
+and XX additionally prevents recreation of an absent key. A snapshot without TTL
+is treated as corrupt on update. No retry loop is introduced in the repository.
+
+WATCH/MULTI is used instead of Lua to keep JSON validation in Python and follow the
+existing transaction contract. It costs extra Redis round trips, acceptable for this
+single-key, short-lived workload. Client connection-error retries are disabled;
+redis-py WatchError caused by connection loss is translated to PersistenceFailure,
+not treated as contention. A true WATCH conflict returns False to the existing
+application retry loop. Connection loss can leave a write's outcome uncertain; the
+adapter does not blindly replay it. A subsequent state read reconciles the outcome.
+
+SecureSessionTokens uses secrets.token_urlsafe(32), SHA-256 and constant-time digest
+comparison. High-entropy anonymous credentials do not require password hashing or
+user accounts. Invalid token shape/digest is rejected; tokens/verifiers are excluded
+from reprs and storage errors do not disclose snapshot contents. HTTP token transport,
+Cache-Control headers and request logging policy belong to the later API phase.
+
+Compose uses official redis:8 with a localhost port and PING health check. Disk
+persistence is intentionally disabled for ephemeral sessions. Restarting Redis loses
+sessions, consistent with the absence of permanent game history. REDIS_URL is the
+only new setting; TTL stays fixed at the agreed 15 minutes. PostgreSQL volume/data
+are unchanged. Standalone-container port-conflict handling is documented in the
+backend README and never performed automatically.

@@ -187,3 +187,17 @@ def test_seed_conflict_rolls_back_all_inserts(database_url):
         assert await connection.scalar(select(func.count()).select_from(AnswerOption)) == 0
         assert await connection.scalar(select(func.count()).select_from(Effect)) == 1
     asyncio.run(in_schema(database_url, check))
+
+
+def test_session_content_lookup_includes_inactive_definitions(database_url):
+    async def check(connection):
+        await seed(connection)
+        qid, tid = seed_id('question:http'), seed_id('starter_common')
+        before = await repository(connection).load_card_content(qid, tid)
+        await connection.execute(update(Question).where(Question.id == qid).values(is_active=False))
+        await connection.execute(update(CardTemplate).where(CardTemplate.id == tid).values(is_active=False))
+        await connection.commit()
+        assert await repository(connection).load_card_content(qid, tid) == before
+        with pytest.raises(CatalogFailure, match='referenced card content'):
+            await repository(connection).load_card_content(uuid4(), tid)
+    asyncio.run(in_schema(database_url, check))
