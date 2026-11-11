@@ -1,0 +1,30 @@
+import { expect, test } from '@playwright/test'
+
+test('starts from PostgreSQL content and restores the same Redis session on refresh', async ({ page }) => {
+  await page.goto('/playground')
+  await expect(page.getByRole('heading', { name: 'Playground.' })).toBeVisible()
+  const startResponse = page.waitForResponse(response => response.url().endsWith('/api/v1/games') && response.request().method() === 'POST')
+  await page.getByRole('button', { name: 'Start Game', exact: true }).click()
+  const response = await startResponse
+  expect(response.status()).toBe(201)
+  const body = await response.json()
+  expect('correct_answer_id' in body.card.question).toBe(false)
+  expect(response.headers()['cache-control']).toBe('no-store')
+  await expect(page.locator('.game-options li')).toHaveCount(4)
+  await expect(page.getByRole('heading', { name: body.card.question.text, exact: true })).toBeVisible()
+  const storedID = await page.evaluate(() => JSON.parse(sessionStorage.getItem('playground.session.v1')!).game_id)
+  expect(storedID).toBe(body.game_id)
+  const restoreResponse = page.waitForResponse(response => response.url().endsWith(`/api/v1/games/${storedID}`))
+  await page.reload()
+  const restored = await restoreResponse
+  expect(restored.status()).toBe(200)
+  expect(Boolean(restored.request().headers()['x-game-token'])).toBe(true)
+  const restoredBody = await restored.json()
+  expect('session_token' in restoredBody).toBe(false)
+  expect(restoredBody.game_id).toBe(storedID)
+  expect(restoredBody.remaining_time_ms).toBeLessThanOrEqual(body.remaining_time_ms)
+  await expect(page.getByRole('heading', { name: body.card.question.text, exact: true })).toBeVisible()
+  await page.setViewportSize({ width: 375, height: 812 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await expect(page.locator('.game-options button')).toHaveCount(0)
+})

@@ -272,7 +272,7 @@ Treat client-submitted HP, time, score, streak, effects, difficulty or success f
 | No eligible template/question pair exists | Finish with `NO_QUESTIONS_AVAILABLE` |
 | Time expires while result is visible | No next card; session finishes on authoritative check |
 | Play Again | Completely new game; old question IDs eligible again |
-| Refresh browser | Resumption behavior TBD; no client-driven score or time changes |
+| Refresh browser | Restore via tab-scoped credential and authenticated GET; no client-driven score or time changes |
 
 ## 11. Finalized answer processing order
 
@@ -288,8 +288,8 @@ Treat client-submitted HP, time, score, streak, effects, difficulty or success f
 ## 12. Remaining decisions before implementation
 
 - Final balance tuning (effect values, costs, weights and template budgets).
-- API payloads/status codes and concrete Redis transaction integration.
-- Final result statistics and resume-after-refresh UX.
+- Answer/next-card API payloads/status codes; Start/Restore and Redis transactions are implemented.
+- Final result statistics; basic refresh restoration is implemented.
 
 **Phase 3.1:** application orchestration and constrained question exhaustion are implemented with in-memory fake tests. Concrete persistence and HTTP adapters follow.
 
@@ -305,3 +305,13 @@ budgets or weighted selection. PostgreSQL catalog integration now supplies expli
 template-to-effect UUID mappings to CardFactory through GameCatalogs. Existing
 in-memory callers may omit the mapping to retain shared-pool behavior. See ARCH.md
 section 4 for hydration, validation and seed semantics.
+
+
+## Phase 3 delivery boundary
+
+Start Game and page-refresh restoration are available through Vue and the two
+Start/Restore HTTP endpoints. The screen displays a real question, four read-only
+options, HP, score and a display-only countdown. At zero, GET confirms authoritative
+expiry; there is no periodic polling. A finished game shows a brief notice and can
+start a fresh session. Answer submission, Next Card and full result display remain
+Phase 4 work; domain rules and the continuous 60-second initial timer are unchanged.

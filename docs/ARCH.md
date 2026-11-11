@@ -1,6 +1,6 @@
 # Architecture — Developer Portfolio & Playground (v1)
 
-**Status:** Draft — REST API design agreed at conceptual level; implementation details and final DTOs remain open.
+**Status:** Start/Restore HTTP contracts implemented; answer/next-card transport and deployment remain open.
 
 **Related documents:** [`DOMAIN.md`](DOMAIN.md) (entities and invariants), [`GAME_DESIGN.md`](GAME_DESIGN.md) (gameplay and use cases).
 
@@ -214,7 +214,7 @@ expiry precedes semantic gameplay checks. Refresh advances active time and detec
 termination; created/finished sessions remain unchanged. TIME_EXPIRED wins over
 pre-existing HP depletion; HP_DEPLETED wins only for simultaneous post-answer depletion.
 Phase 3.1 defines caller clock acquisition and retry semantics below; transport
-error mapping remains future API work.
+Start/Restore error mappings are finalized in section 12; answer/next-card transport remains future work.
 
 ## 7. Concurrency and correctness
 
@@ -357,9 +357,9 @@ Concurrency conflicts reload and reevaluate authorization, timer and phase befor
 
 - Full-loop domain validation lives in `backend/tests/domain/test_game_loop.py`, using real CardFactory/GameSession components, seeded randomness and explicit timestamps. Application orchestration is not implemented by these tests.
 - Phase 3.1 implements the constrained exhaustion transition and initial empty-pool failure described below.
-- Final Pydantic DTO field definitions, precise 401/403/404 behavior and abuse protection. Duplicate commands are rejected; HTTP idempotency keys are not implemented.
+- Answer/next-card DTOs and abuse protection remain open. Start/Restore DTOs and uniform 404 session errors are finalized in section 12. Duplicate commands are rejected; HTTP idempotency keys are not implemented.
 - PostgreSQL catalog hydration, association-aware generation and starter seeds are implemented; production content expansion and balancing remain.
-- Redis schema version 1, secure tokens and real transaction integration tests are implemented; API lifespan wiring remains future work.
+- Redis schema version 1, secure tokens, real transaction tests and API lifespan wiring are implemented.
 - Final effect weights/costs and balancing simulations.
 - Whether to track extra per-session statistics for the end screen, and how long finished result screens remain retrievable.
 
@@ -533,3 +533,52 @@ sessions, consistent with the absence of permanent game history. REDIS_URL is th
 only new setting; TTL stays fixed at the agreed 15 minutes. PostgreSQL volume/data
 are unchanged. Standalone-container port-conflict handling is documented in the
 backend README and never performed automatically.
+
+
+## 12. Phase 3 — Start/Restore browser-to-storage slice
+
+The implemented endpoints are `POST /api/v1/games` (bodyless, 201) and
+`GET /api/v1/games/{game_id}` (200, `X-Game-Token` required). These decisions finalize
+the previously provisional Start/Restore contract; answer/next-card examples above
+remain illustrative and those routes are not exposed yet.
+
+HTTP DTOs live in `app/api/schemas.py`, separate from domain/application models.
+`GameResponse` has `game_id`, status, phase, player, remaining_time_ms, safe card,
+game_over_reason and nullable last_answer_result. StartedGameResponse adds
+session_token, which never appears in GET responses. POST also sets Location to the
+session path, without credentials. SessionRequest describes UUID/header inputs; no
+client-supplied player state, clock or answer is needed for these operations.
+
+All unavailable sessions (missing header, invalid token, missing/expired key) map to
+404 SESSION_UNAVAILABLE with identical public text. Parameter validation maps to
+422 INVALID_REQUEST without echoing inputs. CatalogFailure/PersistenceFailure map
+to 503 SERVICE_UNAVAILABLE; NoPlayableQuestions maps to 503 NO_PLAYABLE_QUESTIONS;
+ConcurrentUpdate maps to 409 CONCURRENT_UPDATE. Unexpected game-route exceptions
+produce sanitized 500 INTERNAL_ERROR even when debug is enabled. Error envelopes
+are `{error: {code, message}}`. All game responses use Cache-Control: no-store and
+X-Content-Type-Options: nosniff. No request-body/header logging is added.
+
+FastAPI `create_app()` and lifespan are the composition root. Resources are created
+inside lifespan, owned per app instance and disposed through AsyncExitStack.
+GameServices holds the two use cases; a small FastAPI dependency exposes it to thin
+routes. The UTC system clock and independent Random/CardFactory provider preserve
+existing application policies. Importing the module creates no connections/clients;
+health remains liveness only. Migrations and seeds remain explicit operator commands.
+
+The Vue API client uses relative /api paths, typed models and response-shape checks.
+Vite proxies /api to 127.0.0.1:8000; no CORS middleware is needed. Production routing
+must send /api to FastAPI before the SPA fallback and use HTTPS on the same origin.
+
+The Playground composable keeps only game_id and session_token in sessionStorage.
+It restores on mount, clears credentials for unavailable/finished games, preserves
+them for retries after transient failures, and falls back to in-memory access if
+storage is blocked. Tab-scoped storage limits persistence but is accessible to
+same-origin scripts, so it is not an XSS defense. No token enters URLs or rendered
+state. Unmount cancels pending requests and countdown timers.
+
+The local display subtracts monotonic elapsed time and conservatively accounts for
+request duration. At zero, GET reconciles authoritative expiry (no polling). An
+active correction reschedules confirmation; network failure requires manual retry.
+The browser does not decide game termination. The UI displays the question/options,
+HP, score, time, loading/errors and a minimal finished notice. Options are read-only;
+full answer, next-card and result interactions are deferred to Phase 4.

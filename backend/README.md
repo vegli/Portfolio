@@ -56,7 +56,8 @@ Safe immutable views keep domain objects and unanswered correct-answer IDs priva
 Application tests use in-memory fakes: `uv run pytest tests/application`.
 See `docs/ARCH.md` for CAS retries, TTL policies and token contracts.
 PostgreSQL catalog loading, Redis session storage and secure token handling are
-implemented. Gameplay HTTP endpoints and application lifespan wiring remain future work.
+implemented. Start/Restore HTTP endpoints and lifespan wiring are implemented;
+answer and next-card HTTP endpoints remain future work.
 
 ## PostgreSQL content database
 
@@ -108,7 +109,7 @@ Construct `SQLAlchemyCatalogRepository(create_session_factory(engine))` from
 uses a read-only repeatable-read transaction, excludes inactive questions/templates,
 and validates content before returning immutable domain catalogs. Effects have no
 active flag; template associations constrain their eligibility. Invalid content raises
-`CatalogFailure`. FastAPI wiring remains outside this phase.
+`CatalogFailure`. FastAPI lifespan wires this repository into the game use cases.
 
 ```sh
 uv run pytest tests/domain tests/application tests/persistence
@@ -183,3 +184,34 @@ UUID keys and delete only their own keys; they never flush the database. Postgre
 tests use isolated schemas. Real Redis tests cover WATCH conflicts, simultaneous
 answers/draws, expiry during a transaction, absolute TTL preservation/renewal, and
 malformed snapshots. Tests set expiration timestamps directly instead of sleeping.
+
+## Start and restore HTTP API
+
+After starting Compose, applying migrations and seeding, run
+`uv run uvicorn app.main:app --reload`. The frontend Vite proxy targets port 8000.
+
+- `POST /api/v1/games`: no request body; returns 201, a `Location` header, safe game
+  state and a start-only `session_token`.
+- `GET /api/v1/games/{game_id}`: requires `X-Game-Token`; returns safe state with
+  authoritative remaining time, without returning the credential. Reads do not
+  renew Redis TTL. Detecting game timeout persists the terminal state.
+- Missing, invalid and expired credentials/sessions share 404 `SESSION_UNAVAILABLE`.
+  Malformed parameters use 422 `INVALID_REQUEST`; exhausted CAS retries use 409;
+  catalog/storage failure uses 503 `SERVICE_UNAVAILABLE`; an empty playable catalog
+  uses 503 `NO_PLAYABLE_QUESTIONS`; unexpected errors use sanitized 500 responses.
+- All game responses, including errors, carry `Cache-Control: no-store` and
+  `X-Content-Type-Options: nosniff`. Validation errors do not echo submitted inputs.
+
+The exact response models appear in `/docs`. `GameResponse` maps application `id`
+to `game_id`; nested card questions have no correct-answer field. Retained feedback
+may contain the correct answer only after an accepted evaluation. No explanations
+are returned. Tokens should never be pasted into URLs or application logs.
+
+`create_app()` creates no database or Redis clients. Lifespan creates the async
+engine/client, catalog/session repositories, secure tokens, UTC clock and per-game
+random generator, and closes resources at shutdown. No startup migration or seeding
+is automatic. `/health` remains a liveness check and does not require either service.
+
+HTTP tests cover safe projections, token failures, TTL, sanitized service failures,
+resource lifecycle, and a complete request round-trip against both real stores.
+Use the combined test command above to include PostgreSQL/Redis integration tests.

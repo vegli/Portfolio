@@ -136,3 +136,26 @@ h3 { margin: 0 0 var(--space-2); font-size: 1.125rem; font-weight: 600; }
   .portfolio-section { padding-block: var(--space-5); }
   .product-card { padding: var(--space-3); }
 }
+
+.game-screen { max-width: 900px; padding-block: var(--space-5) var(--space-6); }
+.game-content { margin-top: var(--space-5); }
+.game-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-2); margin: 0 0 var(--space-4); }
+.game-stats > div { padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius); }
+.game-stats dt { color: var(--color-muted); font-size: 0.8rem; }
+.game-stats dd { margin: var(--space-1) 0 0; font-size: 1.8rem; font-variant-numeric: tabular-nums; }
+.stat-unit { color: var(--color-muted); font-size: 1rem; margin-left: 0.2rem; }
+.game-card { padding: var(--space-4); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); overflow-wrap: anywhere; }
+.game-card h2 { font-size: clamp(1.25rem, 3vw, 1.65rem); line-height: 1.5; }
+.game-options { padding: 0; margin: var(--space-4) 0; list-style-position: inside; display: grid; gap: var(--space-2); }
+.game-options li { padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius); line-height: 1.5; }
+.game-note, .game-message { color: var(--color-muted); line-height: 1.7; }
+.game-message { margin-top: var(--space-3); }
+.game-error { color: #ffb4ab; }
+.game-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-4); }
+.game-actions .button { margin-top: 0; }
+.game-actions button:disabled { opacity: 0.6; transform: none; }
+@media (max-width: 47.999rem) {
+  .game-stats > div { padding: var(--space-2); }
+  .game-stats dd { font-size: 1.5rem; }
+  .game-card { padding: var(--space-3); }
+}
